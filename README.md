@@ -1,5 +1,7 @@
 # ai-sweatshop
 
+[中文](README.zh-CN.md) | English
+
 > Watch your AI agents work in a pixel-art virtual office.
 
 A fun, open-source monitoring dashboard that visualizes AI coding agents (Claude Code, Codex, Gemini CLI, etc.) as pixel-art office workers. Each agent gets a desk, a monitor with scrolling code, and a speech bubble showing what they're doing in real-time.
