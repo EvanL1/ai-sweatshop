@@ -23,10 +23,18 @@
 ### 作为 Claude Code 插件安装（推荐）
 
 ```bash
-claude mcp add ai-sweatshop -- npx ai-sweatshop --mcp
+# 添加 marketplace 并安装
+claude plugins marketplace add EvanL1/ai-sweatshop
+claude plugins install ai-sweatshop
 ```
 
-重启 Claude Code 即可。像素办公室运行在 http://localhost:7777，Claude 自动获得查询办公室状态的能力。
+重启 Claude Code 即可。Hooks + MCP 工具自动生效，打开 http://localhost:7777 查看像素办公室。
+
+### 备选：MCP 方式
+
+```bash
+claude mcp add ai-sweatshop -- npx ai-sweatshop --mcp
+```
 
 ### 独立使用
 

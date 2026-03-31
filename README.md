@@ -22,13 +22,21 @@ A fun, open-source monitoring dashboard that visualizes AI coding agents (Claude
 
 ## Quick Start
 
-### As a Claude Code Plugin (recommended)
+### Install as Claude Code Plugin (recommended)
+
+```bash
+# Add marketplace & install
+claude plugins marketplace add EvanL1/ai-sweatshop
+claude plugins install ai-sweatshop
+```
+
+Restart Claude Code. Hooks + MCP tools auto-activate. Open http://localhost:7777 to see the pixel office.
+
+### Alternative: MCP server
 
 ```bash
 claude mcp add ai-sweatshop -- npx ai-sweatshop --mcp
 ```
-
-Then restart Claude Code. The pixel office runs at http://localhost:7777 and Claude gets tools to query office status.
 
 ### Standalone
 
