@@ -8,13 +8,12 @@
     "description": "Pixel-art AI agent monitor — watch your AI workers in a virtual office",
     "version": "0.1.0",
     "homepage": "https://github.com/EvanL1/ai-sweatshop",
-    "repository": "https://github.com/EvanL1/ai-sweatshop",
-    "pluginRoot": ".."
+    "repository": "https://github.com/EvanL1/ai-sweatshop"
   },
   "plugins": [
     {
       "name": "ai-sweatshop",
-      "source": "..",
+      "source": ".",
       "description": "Pixel-art AI agent monitor with real-time hooks, MCP tools, and animated office workers",
       "version": "0.1.0",
       "author": {
