@@ -1,0 +1,10 @@
+{
+  "name": "ai-sweatshop",
+  "description": "Pixel-art AI agent monitor marketplace",
+  "version": "1.0.0",
+  "plugins": {
+    "ai-sweatshop": {
+      "path": "."
+    }
+  }
+}
