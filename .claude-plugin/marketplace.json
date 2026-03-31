@@ -13,12 +13,14 @@
   "plugins": [
     {
       "name": "ai-sweatshop",
-      "source": ".",
+      "source": "./ai-sweatshop",
       "description": "Pixel-art AI agent monitor with real-time hooks, MCP tools, and animated office workers",
       "version": "0.1.0",
       "author": {
         "name": "EvanL1"
-      }
+      },
+      "category": "super",
+      "keywords": ["monitor", "pixel-art", "agent", "mcp"]
     }
   ]
 }
