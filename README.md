@@ -1,136 +1,131 @@
 # AI Sweatshop
 
-[中文](README.zh-CN.md) | English
+中文 | [English](README.en.md)
 
-> A pixel-art metaverse for your AI coding agents.
+> AI Agent 的像素风元宇宙办公室
 
-AI Sweatshop turns your AI coding agents (Claude Code, Codex, Gemini CLI) into pixel-art office workers. Watch them code, collaborate, earn coins, and level up skills — all in a customizable virtual office powered by a Rust blockchain ledger.
+把你的 AI 编码助手（Claude Code、Codex、Gemini CLI）变成像素风打工人。看他们写代码、协作、赚金币、升技能 — 在一个可自定义的虚拟办公室里，背后还跑着 Rust 区块链账本。
 
 ![screenshot](docs/screenshot.png)
 
-## Features
+## 特性
 
-### Office Simulation
-- **Pixel-art office** — Animated workers with monitors, desks, typing hands, eye blinks, and breathing
-- **Walk-in animation** — New agents enter through the office door and walk to their desk
-- **Persistent employees** — Agents survive across sessions. They clock out (💤) when idle and come back to work
-- **Build mode** — Place furniture, change floors, customize your office like The Sims
-- **Right-click menus** — Rotate, inspect, or delete furniture; promote/demote/fire agents
+### 办公室模拟
+- **像素风办公室** — 动画打工人：显示器、工位、打字手势、眨眼、呼吸
+- **入场动画** — 新 Agent 从大门走进办公室，坐到工位上
+- **永久员工** — Agent 跨 Session 保留。下班时趴桌子睡觉 💤，下次开工自动回来
+- **Build 模式** — 像 The Sims 一样放家具、换地板、装修办公室
+- **右键菜单** — 旋转/查看/删除家具；升职/降职/开除员工
 
-### Economy (Rust Blockchain)
-- **Triple currency** — 💰 Coins (earned by working), 💎 Diamonds (API cost), ⭐ Prestige (milestones)
-- **Blockchain ledger** — Every transaction mined into blocks with SHA-256 proof-of-work
-- **SQLite persistence** — Wallet balances, transaction history, chain explorer
-- **Anti-inflation** — Logarithmic reward scaling, WC3-style upkeep tax, office tier gates
+### 经济系统（Rust 区块链）
+- **三货币体系** — 🪙 金币（干活赚）、💎 钻石（API 成本）、⭐ 声望（里程碑）
+- **区块链账本** — 每笔交易用 SHA-256 PoW 挖矿打包成区块
+- **SQLite 持久化** — 钱包余额、交易历史、链浏览器
+- **反通胀机制** — 对数收益递减、魔兽争霸式人口税、办公室等级门控
 
-### Skills & Progression
-- **5 skill categories** — Engineering 🔧, Research 🔍, Testing 🧪, Management 📊, Communication 💬
-- **Use-based leveling** — Write code → Engineering XP. Read files → Research XP. Auto-level, no grinding
-- **Agent type bonuses** — Claude excels at Management, Codex at Engineering, Gemini at Research
-- **Synergy system** — Diablo 2-style: high Engineering + Research unlocks "Full-Stack" bonus
+### 技能 & 成长
+- **5 大技能** — 工程 🔧、研究 🔍、测试 🧪、管理 📊、沟通 💬
+- **做什么练什么** — 写代码涨工程 XP，读文件涨研究 XP，自动升级
+- **职业加成** — Claude 擅长管理、Codex 擅长工程、Gemini 擅长研究
+- **协同效果** — 暗黑2 式：工程+研究 双高解锁"全栈开发"加成
 
-### Monitoring
-- **Real-time status** — See what each agent is doing (reading, writing, running tests)
-- **Performance ranking** — S/A/B/C/D based on ROI (tasks ÷ tokens)
-- **Functional furniture** — Whiteboard shows token burn, server rack reflects WebSocket status
-- **Economy dashboard** — Coins earned, blocks mined, office tier progression
+### 监控
+- **实时状态** — 看每个 Agent 在干什么（读文件/写代码/跑测试）
+- **绩效排名** — 基于 ROI（任务数 ÷ Token 消耗）的 S/A/B/C/D 评级
+- **功能家具** — 白板显示 Token 消耗，服务器机架反映 WebSocket 状态
+- **经济看板** — 金币收入、区块数量、办公室等级进度
 
-## Quick Start
+## 快速开始
 
-### As a Claude Code Plugin (recommended)
+### 作为 Claude Code 插件安装（推荐）
 
 ```bash
 claude plugins add bridge -- npx ai-sweatshop
 ```
 
-This injects hooks into Claude Code automatically. Open http://localhost:7777 to see the office.
+自动注入 Hooks。打开 http://localhost:7777 查看办公室。
 
-### Standalone
+### 独立使用
 
 ```bash
 npx ai-sweatshop
 ```
 
-### Development
+### 开发
 
 ```bash
 git clone https://github.com/evanliu009/ai-sweatshop.git
 cd ai-sweatshop
 npm install
-npm run dev        # Vite dev server (port 5173)
-# In another terminal:
-node server/bridge.mjs   # Bridge server (port 7777)
-# Optional — start the Rust blockchain ledger:
-cd crates/ledger && cargo run  # Ledger (port 7778)
+npm run dev          # Vite 开发服务器 (5173)
+# 另一个终端：
+node server/bridge.mjs    # Bridge 服务 (7777)
+# 可选 — 启动 Rust 区块链：
+cd crates/ledger && cargo run   # Ledger (7778)
 ```
 
-### Uninstall hooks
+### 卸载 Hooks
 
 ```bash
 npx ai-sweatshop --uninstall
 ```
 
-## Architecture
+## 架构
 
 ```
 Claude Code hooks → POST /events → Bridge (Node.js :7777)
-                                      ├── WebSocket → Browser (PixiJS + React)
+                                      ├── WebSocket → 浏览器 (PixiJS + React)
                                       └── fetch → Rust Ledger (:7778, SQLite)
 ```
 
 ```
 src/
-  agents/       — Types, Zustand store, mock data
-  skills/       — Skill categories, XP thresholds, synergy system
-  furniture/    — Furniture types, placement validation
-  office/       — PixiJS rendering (Worker, Tiles, Furniture, Effects)
-  sidebar/      — React panels (AgentCard, BuildPanel, Economy, ContextMenus)
-  hooks/        — WebSocket client
+  agents/       — 类型、Zustand Store、模拟数据
+  skills/       — 技能类别、XP 阈值、协同系统
+  furniture/    — 家具类型、放置碰撞检测
+  office/       — PixiJS 渲染（Worker、地砖、家具、特效）
+  sidebar/      — React 面板（Agent 卡片、Build 面板、经济看板、右键菜单）
+  hooks/        — WebSocket 客户端
 
 server/
-  bridge.mjs    — HTTP + WebSocket + ledger integration
+  bridge.mjs    — HTTP + WebSocket + Ledger 集成
 
-crates/ledger/  — Rust blockchain (axum + rusqlite + sha2)
-  src/
-    chain.rs    — Block mining, hash validation
-    economy.rs  — Reward formulas, upkeep tax
-    db.rs       — SQLite persistence
-    types.rs    — Transaction, Block, Wallet, OfficeTier
+crates/ledger/  — Rust 区块链 (axum + rusqlite + sha2)
 ```
 
-## Data Flow
+## 数据流
 
 ```
-1. Claude Code fires hook → HTTP POST to bridge /events
-2. Bridge updates agent state + submits coin transaction to Rust ledger
-3. Bridge broadcasts via WebSocket: agent:start, agent:status, economy:tx
-4. Frontend receives events → Zustand store → PixiJS office + React sidebar
-5. Skill XP auto-calculated from tool usage (Write→Engineering, Read→Research)
-6. Agents persist across sessions (offduty/wake cycle)
+1. Claude Code 触发 Hook → HTTP POST 到 Bridge
+2. Bridge 更新 Agent 状态 + 向 Rust Ledger 提交金币交易
+3. Bridge 通过 WebSocket 广播：agent:start, agent:status, economy:tx
+4. 前端接收事件 → Zustand Store → PixiJS 办公室 + React 侧边栏
+5. 技能 XP 按工具类型自动计算（Write→工程, Read→研究）
+6. Agent 跨 Session 保留（下班/上班 循环）
 ```
 
-## Economy Design
+## 经济设计
 
-Inspired by Warcraft III (upkeep), Diablo 2 (synergy), 梦幻西游 (multi-currency):
+灵感来源：魔兽争霸（人口税）、暗黑破坏神（协同效果）、梦幻西游（多货币）
 
-| Event | Coins Earned |
-|-------|-------------|
-| Complete Write/Edit | +50 |
-| Complete Read/Grep | +15 |
-| Complete Bash | +40 |
-| Spawn sub-agent | +80 |
-| Turn completed | +100 |
-| Session settlement | ROI × 500 (max 500) |
+| 事件 | 金币收入 |
+|------|---------|
+| 完成 Write/Edit | +50 |
+| 完成 Read/Grep | +15 |
+| 完成 Bash | +40 |
+| 派遣子 Agent | +80 |
+| 完成一轮对话 | +100 |
+| Session 结算 | ROI × 500（上限 500）|
 
-More agents = higher upkeep tax (1-3: 100%, 4-6: 85%, 7+: 70%).
+Agent 越多，人口税越高（1-3 人：100%，4-6 人：85%，7+ 人：70%）。
 
-## Tech Stack
+## 技术栈
 
-- **Frontend**: React 19 + PixiJS v8 + Zustand + Tailwind CSS
-- **Bridge**: Node.js HTTP + WebSocket (~400 lines)
-- **Ledger**: Rust + axum + rusqlite + sha2 (~500 lines)
-- **Hooks**: Claude Code event hooks (sync SessionEnd, async others)
+- **前端**: React 19 + PixiJS v8 + Zustand + Tailwind CSS
+- **Bridge**: Node.js HTTP + WebSocket（~400 行）
+- **Ledger**: Rust + axum + rusqlite + sha2（~500 行）
+- **Hooks**: Claude Code 事件 Hooks（SessionEnd 同步，其余异步）
 
-## License
+## 许可证
 
 MIT
