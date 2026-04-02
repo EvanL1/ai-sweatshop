@@ -111,8 +111,6 @@ crates/ledger/  — Rust blockchain (axum + rusqlite + sha2)
 
 ## Economy Design
 
-Inspired by Warcraft III (upkeep), Diablo 2 (synergy), 梦幻西游 (multi-currency):
-
 | Event | Coins Earned |
 |-------|-------------|
 | Complete Write/Edit | +50 |
