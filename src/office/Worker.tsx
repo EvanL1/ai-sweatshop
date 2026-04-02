@@ -1,10 +1,12 @@
-import { useCallback, useRef, useEffect, useState } from 'react'
+import { useCallback, useRef, useEffect } from 'react'
 import { useTick } from '@pixi/react'
 import type { Graphics as PixiGraphics, FederatedPointerEvent } from 'pixi.js'
 import type { AgentWorker } from '../agents/types'
 import { getPerformanceRank, RANK_COLORS, LEVEL_MULTIPLIER, LEVEL_ORDER } from '../agents/types'
 import { useOfficeStore } from '../agents/store'
 import { SpeechBubble } from './SpeechBubble'
+import { SkillLevelUp } from './SkillLevelUp'
+import { SKILL_CATEGORIES, SKILL_SPECS } from '../skills/types'
 
 const AGENT_COLORS: Record<string, number> = {
   claude: 0xe94560,
@@ -46,7 +48,7 @@ type Props = {
 }
 
 // Facing direction based on status
-type Facing = 'back' | 'front' | 'front-error'
+type Facing = 'back' | 'front' | 'front-error' | 'offduty'
 function getFacing(status: string): Facing {
   switch (status) {
     case 'typing':
@@ -55,6 +57,8 @@ function getFacing(status: string): Facing {
       return 'back'
     case 'error':
       return 'front-error'
+    case 'offduty':
+      return 'offduty'
     default:
       return 'front'
   }
@@ -69,37 +73,32 @@ export function Worker({ worker, isSelected }: Props) {
   const hairColor = HAIR_COLORS[worker.agentType] ?? HAIR_COLORS.unknown
   const facing = getFacing(worker.status)
   const isWorking = facing === 'back'
+  const isOffduty = facing === 'offduty'
   const rank = getPerformanceRank(worker)
   const rankHex = parseInt(RANK_COLORS[rank].slice(1), 16)
 
-  // Animation state
-  const animTime = useRef(Math.random() * 10) // desync workers
-  const [bodyBob, setBodyBob] = useState(0)
-  const [handPhase, setHandPhase] = useState(false) // left/right hand alternation
-  const [eyeOpen, setEyeOpen] = useState(true)
-  const [screenScroll, setScreenScroll] = useState(0)
+  // Animation state — all refs to avoid per-frame React re-renders
+  const animTime = useRef(Math.random() * 10)
+  const bodyBobRef = useRef(0)
+  const handPhaseRef = useRef(false)
+  const eyeOpenRef = useRef(true)
+  const screenScrollRef = useRef(0)
+  const gfxRef = useRef<PixiGraphics | null>(null)
 
-  useTick(useCallback((ticker: any) => {
+  useTick(useCallback((ticker: { deltaMS: number }) => {
     const dt = ticker.deltaMS / 1000
     animTime.current += dt
-
-    // Breathing bob (all states)
-    setBodyBob(Math.sin(animTime.current * 2) * 1)
-
-    // Typing hand alternation (every 0.25s when working)
+    bodyBobRef.current = Math.sin(animTime.current * 2) * 1
     if (isWorking) {
-      setHandPhase(Math.floor(animTime.current * 4) % 2 === 0)
+      handPhaseRef.current = Math.floor(animTime.current * 4) % 2 === 0
+      screenScrollRef.current = (animTime.current * 8) % 20
     }
-
-    // Eye blink (when facing viewer, ~every 3s, duration 0.15s)
     if (!isWorking) {
-      const blinkCycle = animTime.current % 3.5
-      setEyeOpen(blinkCycle > 0.15)
+      eyeOpenRef.current = (animTime.current % 3.5) > 0.15
     }
-
-    // Screen code scroll
-    if (isWorking) {
-      setScreenScroll((animTime.current * 8) % 20)
+    // Imperatively redraw without triggering React re-render
+    if (gfxRef.current) {
+      drawWorker(gfxRef.current)
     }
   }, [isWorking]))
 
@@ -124,11 +123,14 @@ export function Worker({ worker, isSelected }: Props) {
     }
   }, [worker.id, moveWorker])
 
-  const drawWorkstation = useCallback(
-    (g: PixiGraphics) => {
-      g.clear()
-      const px = PERSON_X
-      const py = PERSON_Y + bodyBob
+  const drawWorker = useCallback((g: PixiGraphics) => {
+    g.clear()
+    const bodyBob = bodyBobRef.current
+    const handPhase = handPhaseRef.current
+    const eyeOpen = eyeOpenRef.current
+    const screenScroll = screenScrollRef.current
+    const px = PERSON_X
+    const py = PERSON_Y + bodyBob
 
       // selection glow
       if (isSelected) {
@@ -137,11 +139,18 @@ export function Worker({ worker, isSelected }: Props) {
         g.fill()
       }
 
+      // Dim entire workstation when offduty
+      if (isOffduty) {
+        g.setFillStyle({ color: 0x000000, alpha: 0.45 })
+        g.rect(-6, MONITOR_Y - 6, DESK_W + 12, DESK_Y + DESK_H + 60)
+        g.fill()
+      }
+
       // === MONITOR ===
       g.setFillStyle({ color: 0x1a1a2e })
       g.roundRect(MONITOR_X - 1, MONITOR_Y - 1, MONITOR_W + 2, MONITOR_H + 2, 2)
       g.fill()
-      const screenColor = isWorking ? 0x2ec4b6 : 0x1e6e68
+      const screenColor = isWorking ? 0x2ec4b6 : isOffduty ? 0x0a0a0a : 0x1e6e68
       g.setFillStyle({ color: screenColor })
       g.rect(MONITOR_X + SCREEN_PAD, MONITOR_Y + SCREEN_PAD,
         MONITOR_W - SCREEN_PAD * 2, MONITOR_H - SCREEN_PAD * 2)
@@ -207,11 +216,25 @@ export function Worker({ worker, isSelected }: Props) {
 
       // === PERSON ===
       // body
-      g.setFillStyle({ color })
+      g.setFillStyle({ color: isOffduty ? 0x555566 : color })
       g.rect(px, py + HEAD_SIZE, BODY_W, BODY_H)
       g.fill()
 
-      if (facing === 'back') {
+      if (isOffduty) {
+        // --- OFFDUTY: slumped head on desk ---
+        // Arms folded on desk
+        g.setFillStyle({ color: 0x555566 })
+        g.rect(px - 4, DESK_Y + 3, BODY_W + 8, 5)
+        g.fill()
+        // Head face-down on folded arms
+        g.setFillStyle({ color: SKIN, alpha: 0.8 })
+        g.rect(px + 5, DESK_Y - 6, HEAD_SIZE, HEAD_SIZE - 2)
+        g.fill()
+        // Hair
+        g.setFillStyle({ color: hairColor, alpha: 0.8 })
+        g.rect(px + 5, DESK_Y - 6, HEAD_SIZE, 6)
+        g.fill()
+      } else if (facing === 'back') {
         // --- BACK VIEW: facing monitor, working ---
         g.setFillStyle({ color: SKIN })
         g.rect(px + 4, py, HEAD_SIZE, HEAD_SIZE)
@@ -333,9 +356,9 @@ export function Worker({ worker, isSelected }: Props) {
         g.fill()
       }
 
-      // name tag
+      // name tag (grayed when offduty)
       const tagW = 56
-      g.setFillStyle({ color: 0x000000, alpha: 0.6 })
+      g.setFillStyle({ color: isOffduty ? 0x222233 : 0x000000, alpha: 0.6 })
       g.roundRect(UNIT_CENTER_X - tagW / 2, py + HEAD_SIZE + BODY_H + 12, tagW, 12, 2)
       g.fill()
 
@@ -362,11 +385,30 @@ export function Worker({ worker, isSelected }: Props) {
         g.roundRect(3, MONITOR_Y + 1, Math.min(20, worker.tasksCompleted * 2), 8, 1)
         g.fill()
       }
-    },
-    [color, hairColor, facing, isWorking, isSelected, worker.isClone, worker.id,
-     rankHex, worker.tokenUsed, worker.tasksCompleted, worker.level,
-     bodyBob, handPhase, eyeOpen, screenScroll]
-  )
+
+      // === SKILL BARS (below name plate) ===
+      if (worker.skills) {
+        const barMaxW = 10
+        const barH = 2
+        const barGap = 3
+        const totalW = SKILL_CATEGORIES.length * (barMaxW + barGap) - barGap
+        const barStartX = UNIT_CENTER_X - totalW / 2
+        const barBaseY = py + HEAD_SIZE + BODY_H + 26
+        SKILL_CATEGORIES.forEach((cat, i) => {
+          const level = worker.skills[cat] ?? 0
+          const bx = barStartX + i * (barMaxW + barGap)
+          g.setFillStyle({ color: 0x000000, alpha: 0.4 })
+          g.rect(bx, barBaseY, barMaxW, barH)
+          g.fill()
+          if (level > 0) {
+            g.setFillStyle({ color: SKILL_SPECS[cat].color, alpha: 0.9 })
+            g.rect(bx, barBaseY, Math.ceil((level / 10) * barMaxW), barH)
+            g.fill()
+          }
+        })
+      }
+  }, [color, hairColor, facing, isWorking, isOffduty, isSelected, worker.isClone, worker.id,
+     rankHex, worker.tokenUsed, worker.tasksCompleted, worker.level, worker.skills])
 
   const openContextMenu = useOfficeStore((s) => s.openContextMenu)
 
@@ -402,15 +444,24 @@ export function Worker({ worker, isSelected }: Props) {
       cursor="grab"
       onPointerDown={onPointerDown}
     >
-      <pixiGraphics draw={drawWorkstation} />
+      <pixiGraphics draw={(g: PixiGraphics) => { gfxRef.current = g; drawWorker(g) }} />
       <pixiText
         text={worker.name}
         anchor={{ x: 0.5, y: 0 }}
         x={UNIT_CENTER_X}
         y={nameY}
-        style={{ fontSize: 7, fill: 0xffffff, fontFamily: 'monospace' }}
+        style={{ fontSize: 7, fill: isOffduty ? 0x666677 : 0xffffff, fontFamily: 'monospace' }}
       />
-      <SpeechBubble text={worker.currentTask} x={UNIT_CENTER_X} y={BUBBLE_Y} />
+      {isOffduty
+        ? <pixiText
+            text="zzz"
+            anchor={{ x: 0.5, y: 1 }}
+            x={UNIT_CENTER_X}
+            y={BUBBLE_Y}
+            style={{ fontSize: 8, fill: 0x8888aa, fontFamily: 'monospace' }}
+          />
+        : <SpeechBubble text={worker.currentTask} x={UNIT_CENTER_X} y={BUBBLE_Y} />
+      }
     </pixiContainer>
   )
 }

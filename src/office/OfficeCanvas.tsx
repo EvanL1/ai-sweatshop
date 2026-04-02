@@ -6,6 +6,8 @@ import { OfficeTiles } from './OfficeTiles'
 import { Worker, WORKER_CENTER } from './Worker'
 import { TeamLines } from './TeamLines'
 import { CloneEffect } from './CloneEffect'
+import { FurnitureLayer } from './FurnitureLayer'
+import { BuildOverlay } from './BuildOverlay'
 
 extend({ Container, Graphics, Text })
 
@@ -60,12 +62,13 @@ export function OfficeCanvas() {
     <div ref={containerRef} style={{ width: '100%', height: '100%' }}>
     <Application
       resizeTo={containerRef}
-      background="#2b2d42"
+      background="#383850"
       antialias={false}
       resolution={1}
     >
       <pixiContainer y={scrollY}>
         <OfficeTiles />
+        <FurnitureLayer />
         <TeamLines workers={workers} cloneLinks={cloneLinks} />
         {Object.values(workers).map((w) => (
           <Worker key={w.id} worker={w} isSelected={w.id === selectedId} />
@@ -86,6 +89,7 @@ export function OfficeCanvas() {
             />
           )
         })}
+        <BuildOverlay />
       </pixiContainer>
     </Application>
     </div>

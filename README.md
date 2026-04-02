@@ -1,42 +1,49 @@
-# ai-sweatshop
+# AI Sweatshop
 
 [中文](README.zh-CN.md) | English
 
-> Watch your AI agents work in a pixel-art virtual office.
+> A pixel-art metaverse for your AI coding agents.
 
-A fun, open-source monitoring dashboard that visualizes AI coding agents (Claude Code, Codex, Gemini CLI, etc.) as pixel-art office workers. Each agent gets a desk, a monitor with scrolling code, and a speech bubble showing what they're doing in real-time.
+AI Sweatshop turns your AI coding agents (Claude Code, Codex, Gemini CLI) into pixel-art office workers. Watch them code, collaborate, earn coins, and level up skills — all in a customizable virtual office powered by a Rust blockchain ledger.
 
 ![screenshot](docs/screenshot.png)
 
 ## Features
 
-- **Pixel-art office** — Each AI agent becomes an animated pixel worker with their own workstation
-- **Real-time monitoring** — Hooks into Claude Code events (tool calls, sub-agents, session lifecycle)
-- **Shadow Clone (影分身)** — Sub-agents appear as team members with animated connecting lines
-- **Performance tracking** — S/A/B/C/D ranking based on task completion vs token consumption
-- **Token budget** — Shared pool with salary tiers (Claude = senior, Codex = mid, Gemini = junior)
-- **Right-click management** — Promote, demote, raise salary, or fire agents
-- **Dynamic animations** — Breathing, typing hands, eye blinking, screen scrolling, speech bubble typewriter
-- **Live/Mock modes** — Works with real agent data or standalone demo mode
-- **MCP Plugin** — Install as a Claude Code plugin for seamless integration
+### Office Simulation
+- **Pixel-art office** — Animated workers with monitors, desks, typing hands, eye blinks, and breathing
+- **Walk-in animation** — New agents enter through the office door and walk to their desk
+- **Persistent employees** — Agents survive across sessions. They clock out (💤) when idle and come back to work
+- **Build mode** — Place furniture, change floors, customize your office like The Sims
+- **Right-click menus** — Rotate, inspect, or delete furniture; promote/demote/fire agents
+
+### Economy (Rust Blockchain)
+- **Triple currency** — 💰 Coins (earned by working), 💎 Diamonds (API cost), ⭐ Prestige (milestones)
+- **Blockchain ledger** — Every transaction mined into blocks with SHA-256 proof-of-work
+- **SQLite persistence** — Wallet balances, transaction history, chain explorer
+- **Anti-inflation** — Logarithmic reward scaling, WC3-style upkeep tax, office tier gates
+
+### Skills & Progression
+- **5 skill categories** — Engineering 🔧, Research 🔍, Testing 🧪, Management 📊, Communication 💬
+- **Use-based leveling** — Write code → Engineering XP. Read files → Research XP. Auto-level, no grinding
+- **Agent type bonuses** — Claude excels at Management, Codex at Engineering, Gemini at Research
+- **Synergy system** — Diablo 2-style: high Engineering + Research unlocks "Full-Stack" bonus
+
+### Monitoring
+- **Real-time status** — See what each agent is doing (reading, writing, running tests)
+- **Performance ranking** — S/A/B/C/D based on ROI (tasks ÷ tokens)
+- **Functional furniture** — Whiteboard shows token burn, server rack reflects WebSocket status
+- **Economy dashboard** — Coins earned, blocks mined, office tier progression
 
 ## Quick Start
 
-### Install as Claude Code Plugin (recommended)
+### As a Claude Code Plugin (recommended)
 
 ```bash
-# Add marketplace & install
-claude plugins marketplace add EvanL1/ai-sweatshop
-claude plugins install ai-sweatshop
+claude plugins add bridge -- npx ai-sweatshop
 ```
 
-Restart Claude Code. Hooks + MCP tools auto-activate. Open http://localhost:7777 to see the pixel office.
-
-### Alternative: MCP server
-
-```bash
-claude mcp add ai-sweatshop -- npx ai-sweatshop --mcp
-```
+This injects hooks into Claude Code automatically. Open http://localhost:7777 to see the office.
 
 ### Standalone
 
@@ -44,7 +51,18 @@ claude mcp add ai-sweatshop -- npx ai-sweatshop --mcp
 npx ai-sweatshop
 ```
 
-Opens the pixel office in your browser. Automatically injects Claude Code hooks for real-time monitoring.
+### Development
+
+```bash
+git clone https://github.com/evanliu009/ai-sweatshop.git
+cd ai-sweatshop
+npm install
+npm run dev        # Vite dev server (port 5173)
+# In another terminal:
+node server/bridge.mjs   # Bridge server (port 7777)
+# Optional — start the Rust blockchain ledger:
+cd crates/ledger && cargo run  # Ledger (port 7778)
+```
 
 ### Uninstall hooks
 
@@ -52,51 +70,66 @@ Opens the pixel office in your browser. Automatically injects Claude Code hooks 
 npx ai-sweatshop --uninstall
 ```
 
-## How It Works
+## Architecture
 
 ```
-Claude Code session
-  ├── PreToolUse hook  ──→  Bridge Server (:7777)  ──→  WebSocket  ──→  Pixel Office
-  ├── SubagentStart    ──→  New worker appears with desk + poof animation
-  ├── PostToolUse      ──→  Worker status updates (typing/reading/running/idle)
-  ├── Stop             ──→  Worker goes idle (stays in office)
-  └── SessionEnd       ──→  Worker leaves the office
+Claude Code hooks → POST /events → Bridge (Node.js :7777)
+                                      ├── WebSocket → Browser (PixiJS + React)
+                                      └── fetch → Rust Ledger (:7778, SQLite)
 ```
 
-The bridge server receives hook events via HTTP POST, maintains agent state, and pushes updates to the browser via WebSocket. The frontend renders everything with PixiJS.
+```
+src/
+  agents/       — Types, Zustand store, mock data
+  skills/       — Skill categories, XP thresholds, synergy system
+  furniture/    — Furniture types, placement validation
+  office/       — PixiJS rendering (Worker, Tiles, Furniture, Effects)
+  sidebar/      — React panels (AgentCard, BuildPanel, Economy, ContextMenus)
+  hooks/        — WebSocket client
 
-## MCP Tools
+server/
+  bridge.mjs    — HTTP + WebSocket + ledger integration
 
-When installed as a plugin, Claude gets these tools:
+crates/ledger/  — Rust blockchain (axum + rusqlite + sha2)
+  src/
+    chain.rs    — Block mining, hash validation
+    economy.rs  — Reward formulas, upkeep tax
+    db.rs       — SQLite persistence
+    types.rs    — Transaction, Block, Wallet, OfficeTier
+```
 
-| Tool | Description |
-|------|-------------|
-| `list_agents` | See who's in the office and what they're doing |
-| `agent_status` | Get detailed status of a specific agent |
-| `office_summary` | Overview: active/idle counts, projects, team structure |
+## Data Flow
 
-## Agent Naming
+```
+1. Claude Code fires hook → HTTP POST to bridge /events
+2. Bridge updates agent state + submits coin transaction to Rust ledger
+3. Bridge broadcasts via WebSocket: agent:start, agent:status, economy:tx
+4. Frontend receives events → Zustand store → PixiJS office + React sidebar
+5. Skill XP auto-calculated from tool usage (Write→Engineering, Read→Research)
+6. Agents persist across sessions (offduty/wake cycle)
+```
 
-- **Main agents** are named after their project directory (e.g., `sweatshop`, `sage`)
-- **Sub-agents** show their role (e.g., `Explorer@sweatshop`, `Reviewer@sage`)
+## Economy Design
+
+Inspired by Warcraft III (upkeep), Diablo 2 (synergy), 梦幻西游 (multi-currency):
+
+| Event | Coins Earned |
+|-------|-------------|
+| Complete Write/Edit | +50 |
+| Complete Read/Grep | +15 |
+| Complete Bash | +40 |
+| Spawn sub-agent | +80 |
+| Turn completed | +100 |
+| Session settlement | ROI × 500 (max 500) |
+
+More agents = higher upkeep tax (1-3: 100%, 4-6: 85%, 7+: 70%).
 
 ## Tech Stack
 
-- **Frontend**: React 19 + PixiJS v8 + @pixi/react + Zustand + Tailwind CSS
-- **Bridge**: Node.js HTTP + WebSocket server (~250 lines)
-- **MCP**: @modelcontextprotocol/sdk
-- **Hooks**: Claude Code async HTTP hooks with `quiet: true`
-
-## Development
-
-```bash
-git clone https://github.com/evanliu009/ai-sweatshop.git
-cd ai-sweatshop
-npm install
-npm run dev      # Vite dev server with HMR
-npm run build    # Production build
-npm start        # Start bridge + open browser
-```
+- **Frontend**: React 19 + PixiJS v8 + Zustand + Tailwind CSS
+- **Bridge**: Node.js HTTP + WebSocket (~400 lines)
+- **Ledger**: Rust + axum + rusqlite + sha2 (~500 lines)
+- **Hooks**: Claude Code event hooks (sync SessionEnd, async others)
 
 ## License
 

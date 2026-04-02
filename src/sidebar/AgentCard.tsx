@@ -2,6 +2,11 @@ import type { AgentWorker } from '../agents/types'
 import { getPerformanceRank, RANK_COLORS, BASE_SALARY, LEVEL_MULTIPLIER, LEVEL_LABELS } from '../agents/types'
 import { useOfficeStore } from '../agents/store'
 import { StatusBadge } from './StatusBadge'
+import { SKILL_SPECS, SKILL_CATEGORIES } from '../skills/types'
+
+const SKILL_ICONS: Record<string, string> = {
+  engineering: '🔧', research: '🔍', testing: '🧪', management: '📊', communication: '💬',
+}
 
 const TYPE_COLORS: Record<string, string> = {
   claude: 'border-l-[#e94560]',
@@ -19,38 +24,57 @@ export function AgentCard({ worker }: { worker: AgentWorker }) {
   const rank = getPerformanceRank(worker)
   const effectiveSalary = (BASE_SALARY[worker.agentType] ?? 1) * (LEVEL_MULTIPLIER[worker.level] ?? 1) * worker.salaryMultiplier
 
+  const isOffduty = worker.status === 'offduty'
+
   return (
     <div
       className={`
-        border-l-2 ${TYPE_COLORS[worker.agentType] ?? TYPE_COLORS.unknown}
-        ${isSelected ? 'bg-[#1e3a5f]' : 'bg-[#1a2744]'}
-        rounded-r px-3 py-2 cursor-pointer transition-colors
-        hover:bg-[#1e3a5f]
+        border-l-3 ${TYPE_COLORS[worker.agentType] ?? TYPE_COLORS.unknown}
+        ${isSelected ? 'bg-[#1e3a5f] ring-1 ring-[#e94560]/30' : isOffduty ? 'bg-[#111122]' : 'bg-[#1a2744]'}
+        ${isOffduty ? 'opacity-50' : ''}
+        rounded-r-lg px-3 py-2.5 cursor-pointer transition-all duration-200
+        hover:bg-[#1e3a5f] hover:translate-x-0.5
       `}
       onClick={() => selectWorker(worker.id)}
     >
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-1.5">
           <span
-            className="text-[10px] font-mono font-bold w-4 text-center"
+            className="text-[13px] font-mono font-bold w-4 text-center"
             style={{ color: RANK_COLORS[rank] }}
           >
             {worker.tokenUsed > 500 ? rank : '—'}
           </span>
-          <span className="text-[#e0e0f0] text-xs font-mono font-bold">
+          <span className={`text-xs font-mono font-bold ${isOffduty ? 'text-[#666677]' : 'text-[#e0e0f0]'}`}>
             {worker.name}
           </span>
-          {worker.isClone && <span className="text-yellow-400 text-[8px]">分身</span>}
-          <span className="text-[#888] text-[8px] font-mono">{LEVEL_LABELS[worker.level]}</span>
+          {worker.isClone && <span className="text-yellow-400 text-[11px]">分身</span>}
+          <span className="text-[#888] text-[11px] font-mono">{LEVEL_LABELS[worker.level]}</span>
         </div>
         <StatusBadge status={worker.status} />
       </div>
-      <p className="text-[#8888a8] text-[10px] font-mono truncate">
+      <p className="text-[#8888a8] text-[13px] font-mono truncate">
         {worker.currentTask}
       </p>
 
+      {/* Skill badges */}
+      {worker.skills && (
+        <div className="flex gap-1 mt-1">
+          {SKILL_CATEGORIES.map((cat) => {
+            const level = worker.skills[cat] ?? 0
+            if (level === 0) return null
+            const hex = `#${SKILL_SPECS[cat].color.toString(16).padStart(6, '0')}`
+            return (
+              <span key={cat} className="text-[11px] font-mono font-bold" style={{ color: hex }}>
+                {SKILL_ICONS[cat]}{level}
+              </span>
+            )
+          })}
+        </div>
+      )}
+
       {/* Stats row */}
-      <div className="flex items-center justify-between mt-1 text-[8px] font-mono text-[#666688]">
+      <div className="flex items-center justify-between mt-1 text-[11px] font-mono text-[#666688]">
         <div className="flex gap-2">
           <span>{worker.tasksCompleted} tasks</span>
           <span>{Math.floor(worker.tokenUsed).toLocaleString()} tok</span>

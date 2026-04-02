@@ -1,15 +1,77 @@
 import { createServer } from 'http'
 import { WebSocketServer } from 'ws'
-import { readFileSync, existsSync } from 'fs'
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs'
 import { join, extname } from 'path'
 import { fileURLToPath } from 'url'
+import { homedir } from 'os'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const DIST_DIR = join(__dirname, '..', 'dist')
 const PORT = process.env.SWEATSHOP_PORT || 7777
+const LEDGER_URL = `http://127.0.0.1:${process.env.LEDGER_PORT || 7778}`
+
+// --- Ledger client (fire-and-forget, graceful if offline) ---
+async function submitTx(txType, agentId, amount, currency, description) {
+  try {
+    const res = await fetch(`${LEDGER_URL}/tx`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tx_type: txType, agent_id: agentId, amount, currency, description }),
+    })
+    if (res.ok) {
+      const tx = await res.json()
+      broadcast({ type: 'economy:tx', tx })
+    }
+    return res.ok
+  } catch { return false }
+}
+
+async function getLedgerBalance(agentId) {
+  try {
+    const res = await fetch(`${LEDGER_URL}/balance/${agentId}`)
+    return res.ok ? await res.json() : null
+  } catch { return null }
+}
+
+// --- Persistence ---
+const SWEATSHOP_DIR = join(homedir(), '.sweatshop')
+const AGENTS_FILE = join(SWEATSHOP_DIR, 'agents.json')
+
+function loadPersistedAgents() {
+  try {
+    if (!existsSync(AGENTS_FILE)) return new Map()
+    const raw = JSON.parse(readFileSync(AGENTS_FILE, 'utf8'))
+    const map = new Map()
+    for (const agent of raw) {
+      // On reload all main agents start as offduty
+      if (!agent.parentId) {
+        map.set(agent.id, { ...agent, status: 'offduty' })
+      }
+    }
+    return map
+  } catch {
+    return new Map()
+  }
+}
+
+function saveAgents() {
+  try {
+    mkdirSync(SWEATSHOP_DIR, { recursive: true })
+    // Only persist main agents (no sub-agents)
+    const mainAgents = [...agents.values()].filter((a) => !a.parentId)
+    writeFileSync(AGENTS_FILE, JSON.stringify(mainAgents, null, 2), 'utf8')
+  } catch { /* ignore write errors */ }
+}
 
 // --- State ---
-const agents = new Map()  // session_id -> agent state
+// agents map keyed by agent ID (persistent ID for mains, session ID for sub-agents)
+const agents = loadPersistedAgents()
+// cwd -> persistent agent ID mapping for main agents
+const cwdIndex = new Map()
+for (const agent of agents.values()) {
+  if (agent.cwd) cwdIndex.set(agent.cwd, agent.id)
+}
+
 const wsClients = new Set()
 
 // --- WebSocket broadcast ---
@@ -25,40 +87,62 @@ function handleHookEvent(data) {
   const sessionId = data.session_id
   if (!sessionId) return
 
-  const agentId = data.agent_id || sessionId
+  const rawAgentId = data.agent_id || sessionId
   const agentType = data.agent_type || 'main'
   const event = data.hook_event_name
+  // For main agents, resolve session ID to persistent ID via cwd lookup
+  const isSubagentEvent = !!data.agent_id && data.agent_id !== sessionId
+  const agentId = !isSubagentEvent && data.cwd && cwdIndex.has(data.cwd)
+    ? cwdIndex.get(data.cwd)
+    : rawAgentId
 
   switch (event) {
     case 'SessionStart': {
-      if (agents.has(agentId)) {
+      const cwd = data.cwd
+      // Check if we have a persistent agent for this cwd
+      const persistentId = cwdIndex.get(cwd)
+      if (persistentId && agents.has(persistentId)) {
+        // Reactivate the existing persistent agent
+        const existing = agents.get(persistentId)
+        existing.sessionId = sessionId
+        existing.agentType = detectAgentType(data)
+        existing.project = extractProject(cwd)
+        existing.cwd = cwd
+        existing.status = 'idle'
+        existing.currentTask = 'Session started'
+        existing.lastSeen = Date.now()
+        broadcast({ type: 'agent:wake', agentId: persistentId })
+        saveAgents()
+      } else if (agents.has(agentId)) {
+        // Session ID collision — update in place
         const existing = agents.get(agentId)
         existing.agentType = detectAgentType(data)
-        existing.project = extractProject(data.cwd)
-        existing.cwd = data.cwd
+        existing.project = extractProject(cwd)
+        existing.cwd = cwd
       } else {
-        // Replace any idle agent from the same cwd (same terminal, new conversation)
-        const cwd = data.cwd
-        for (const [oldId, old] of agents) {
-          if (old.cwd === cwd && old.status === 'idle' && !old.parentId) {
-            broadcast({ type: 'agent:end', agentId: oldId })
-            agents.delete(oldId)
-            break
-          }
+        // Brand-new agent — use stable persistent ID based on project name
+        const project = extractProject(cwd)
+        const persistId = `persistent-${project}`
+        // If a persistent ID already exists but wasn't found via cwdIndex, remove it
+        if (agents.has(persistId)) {
+          agents.delete(persistId)
         }
-        agents.set(agentId, {
-          id: agentId,
+        const newAgent = {
+          id: persistId,
           sessionId,
           name: generateName(data, false),
           agentType: detectAgentType(data),
           parentId: null,
           status: 'idle',
           currentTask: 'Session started',
-          project: extractProject(data.cwd),
-          cwd: data.cwd,
+          project,
+          cwd,
           startedAt: Date.now(),
-        })
-        broadcast({ type: 'agent:start', agent: agents.get(agentId) })
+        }
+        agents.set(persistId, newAgent)
+        cwdIndex.set(cwd, persistId)
+        broadcast({ type: 'agent:start', agent: newAgent })
+        saveAgents()
       }
       break
     }
@@ -72,10 +156,9 @@ function handleHookEvent(data) {
         // parentId cannot be reliably determined here (sessionId is this agent's
         // own session, not the parent's), so leave it null. SubagentStart will
         // patch it in with the correct parent session ID when it fires.
-        const isSubagent = !!data.agent_id && data.agent_id !== sessionId
         agents.set(agentId, {
           id: agentId, sessionId,
-          name: generateName(data, isSubagent),
+          name: generateName(data, isSubagentEvent),
           agentType: detectAgentType(data),
           parentId: null,
           status, currentTask: task,
@@ -97,9 +180,14 @@ function handleHookEvent(data) {
       if (agent) {
         agent.status = 'idle'
         agent.currentTask = `Done: ${data.tool_name}`
-        broadcast({ type: 'agent:status', agentId, status: 'idle', task: agent.currentTask })
+        agent.tasksCompleted = (agent.tasksCompleted || 0) + 1
+        broadcast({ type: 'agent:status', agentId, status: 'idle', task: agent.currentTask, toolName: data.tool_name })
         broadcast({ type: 'agent:task_completed', agentId })
       }
+      // Ledger: reward coins based on tool type
+      const toolRewards = { Write: 50000, Edit: 50000, Bash: 40000, Read: 15000, Grep: 15000, Glob: 15000, Agent: 80000 }
+      const reward = toolRewards[data.tool_name] || 20000
+      submitTx('task_reward', agentId, reward, 'coin', `Completed ${data.tool_name}`).catch(() => {})
       break
     }
 
@@ -116,12 +204,14 @@ function handleHookEvent(data) {
     case 'SubagentStart': {
       const subId = data.agent_id
       if (!subId) break  // no agent_id means we can't distinguish from main session
+      // Resolve parent: sessionId here is the parent's session_id; find persistent ID
+      const parentPersistentId = cwdIndex.get(data.cwd) ?? sessionId
       if (agents.has(subId)) {
         // Sub-agent was auto-registered by an early PreToolUse without knowing its
         // parent. Now that we have the parent context (sessionId = parent's session),
         // patch in the correct parentId.
         const existing = agents.get(subId)
-        existing.parentId = sessionId
+        existing.parentId = parentPersistentId
         existing.name = generateName(data, true)
         broadcast({ type: 'agent:update', agent: existing })
       } else {
@@ -129,13 +219,13 @@ function handleHookEvent(data) {
           id: subId, sessionId,
           name: generateName(data, true),
           agentType: detectAgentType(data),
-          parentId: sessionId,
+          parentId: parentPersistentId,
           status: 'running',
           currentTask: `Subagent ${data.agent_type} starting...`,
           project: extractProject(data.cwd), cwd: data.cwd,
           startedAt: Date.now(),
         })
-        broadcast({ type: 'agent:start', agent: agents.get(subId), parentId: sessionId })
+        broadcast({ type: 'agent:start', agent: agents.get(subId), parentId: parentPersistentId })
       }
       break
     }
@@ -144,6 +234,7 @@ function handleHookEvent(data) {
       const subId = data.agent_id
       broadcast({ type: 'agent:end', agentId: subId })
       agents.delete(subId)
+      submitTx('collab_bonus', subId, 200000, 'coin', 'Sub-agent task completed').catch(() => {})
       break
     }
 
@@ -156,13 +247,28 @@ function handleHookEvent(data) {
         agent.lastSeen = Date.now()
         broadcast({ type: 'agent:status', agentId, status: 'idle', task: agent.currentTask })
       }
+      submitTx('turn_bonus', agentId, 100000, 'coin', 'Turn completed').catch(() => {})
       break
     }
 
     case 'SessionEnd': {
-      // Session truly ended — agent leaves the office
-      broadcast({ type: 'agent:end', agentId })
-      agents.delete(agentId)
+      const agent = agents.get(agentId)
+      if (agent && !agent.parentId) {
+        // Ledger: session settlement bonus
+        const tasks = agent.tasksCompleted || 0
+        const bonus = Math.min(tasks * 50000, 500000)
+        if (bonus > 0) submitTx('session_settle', agentId, bonus, 'coin', `Session settled (${tasks} tasks)`).catch(() => {})
+        // Main agent goes offduty — persistent employee clocks out
+        agent.status = 'offduty'
+        agent.currentTask = '下班了'
+        agent.lastSeen = Date.now()
+        broadcast({ type: 'agent:sleep', agentId })
+        saveAgents()
+      } else {
+        // Sub-agents are ephemeral — remove on session end
+        broadcast({ type: 'agent:end', agentId })
+        agents.delete(agentId)
+      }
       break
     }
 
@@ -246,7 +352,7 @@ const MIME = {
 }
 
 // --- HTTP Server ---
-const server = createServer((req, res) => {
+const server = createServer(async (req, res) => {
   // POST /events — receive hook data
   if (req.method === 'POST' && req.url === '/events') {
     let body = ''
@@ -272,6 +378,39 @@ const server = createServer((req, res) => {
       'Access-Control-Allow-Origin': '*',
     })
     res.end(JSON.stringify([...agents.values()]))
+    return
+  }
+
+  // --- Economy proxy endpoints (forward to Rust ledger) ---
+  if (req.url?.startsWith('/api/economy/balance/')) {
+    const id = req.url.split('/').pop()
+    const wallet = await getLedgerBalance(id)
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+    res.end(JSON.stringify(wallet || { agent_id: id, diamonds: 0, coins: 0, prestige: 0 }))
+    return
+  }
+  if (req.url === '/api/economy/stats') {
+    try {
+      const r = await fetch(`${LEDGER_URL}/stats`)
+      const stats = await r.json()
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+      res.end(JSON.stringify(stats))
+    } catch {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+      res.end(JSON.stringify({ error: 'ledger_offline' }))
+    }
+    return
+  }
+  if (req.url === '/api/economy/chain') {
+    try {
+      const r = await fetch(`${LEDGER_URL}/chain`)
+      const chain = await r.json()
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+      res.end(JSON.stringify(chain))
+    } catch {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+      res.end(JSON.stringify([]))
+    }
     return
   }
 

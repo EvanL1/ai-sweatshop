@@ -1,4 +1,4 @@
-export type AgentStatus = 'idle' | 'typing' | 'reading' | 'running' | 'error' | 'done'
+export type AgentStatus = 'idle' | 'typing' | 'reading' | 'running' | 'error' | 'done' | 'offduty'
 
 export type AnimationState = 'idle' | 'typing' | 'walking'
 
@@ -33,6 +33,8 @@ export type AgentWorker = {
   tasksCompleted: number
   level: WorkerLevel
   salaryMultiplier: number  // can be raised
+  skills: import('../skills/types').AgentSkills
+  skillXP: import('../skills/types').AgentSkillXP
 }
 
 export type CloneLink = {
@@ -72,6 +74,7 @@ export const BASE_TOKEN_RATES: Record<AgentStatus, number> = {
   idle: 5,
   error: 0,
   done: 0,
+  offduty: 0,
 }
 
 export function getPerformanceRank(worker: AgentWorker): PerformanceRank {

@@ -10,7 +10,7 @@ export function EventFeed() {
 
   return (
     <div className="mb-3">
-      <p className="text-[9px] font-mono text-[#e94560] font-bold mb-1 px-1">EVENTS</p>
+      <p className="text-[12px] font-mono text-[#e94560] font-bold mb-1 px-1">EVENTS</p>
       <div className="max-h-[120px] overflow-y-auto space-y-1">
         {events.slice(0, 8).map((e) => {
           const age = Math.floor((now - e.timestamp) / 1000)
@@ -18,9 +18,9 @@ export function EventFeed() {
           return (
             <div
               key={e.id}
-              className="px-2 py-1 bg-[#1a2744] rounded text-[8px] font-mono flex items-start gap-1.5"
+              className="px-2 py-1 bg-[#1a2744] rounded text-[11px] font-mono flex items-start gap-1.5"
             >
-              <span className="text-[10px] shrink-0">{e.icon}</span>
+              <span className="text-[13px] shrink-0">{e.icon}</span>
               <span className="text-[#b0b0c0] flex-1">{e.message}</span>
               <span className="text-[#555] shrink-0">{ageStr}</span>
             </div>

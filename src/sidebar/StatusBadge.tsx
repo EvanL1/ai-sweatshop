@@ -7,12 +7,13 @@ const STATUS_STYLES: Record<AgentStatus, { bg: string; text: string; label: stri
   running: { bg: 'bg-yellow-600', text: 'text-yellow-100', label: 'RUNNING' },
   error: { bg: 'bg-red-600', text: 'text-red-100', label: 'ERROR' },
   done: { bg: 'bg-purple-600', text: 'text-purple-100', label: 'DONE' },
+  offduty: { bg: 'bg-gray-800', text: 'text-gray-500', label: '💤 下班' },
 }
 
 export function StatusBadge({ status }: { status: AgentStatus }) {
   const style = STATUS_STYLES[status] ?? STATUS_STYLES.idle
   return (
-    <span className={`${style.bg} ${style.text} text-[8px] px-1.5 py-0.5 rounded font-mono`}>
+    <span className={`${style.bg} ${style.text} text-[11px] px-1.5 py-0.5 rounded font-mono`}>
       {style.label}
     </span>
   )

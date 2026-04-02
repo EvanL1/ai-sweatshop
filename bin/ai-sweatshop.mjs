@@ -19,19 +19,22 @@ const HOOK_EVENTS = [
   'SubagentStart', 'SubagentStop', 'Stop', 'SessionEnd', 'UserPromptSubmit',
 ]
 
-function makeHookEntry() {
+function makeHookEntry(isSync = false) {
   return {
     matcher: '*',
     hooks: [{
       type: 'command',
       command: `cat | curl -sf -X POST ${HOOK_URL} -H 'Content-Type: application/json' --data-binary @- 2>/dev/null || true`,
-      async: true,
+      ...(isSync ? {} : { async: true }),
       timeout: 3,
       quiet: true,
       [MARKER]: true,
     }],
   }
 }
+
+// SessionEnd must be synchronous so the curl completes before Claude Code exits
+const SYNC_EVENTS = new Set(['SessionEnd'])
 
 // --- Read/write Claude settings ---
 function readSettings() {
@@ -56,13 +59,25 @@ function injectHooks() {
   for (const event of HOOK_EVENTS) {
     if (!settings.hooks[event]) settings.hooks[event] = []
 
-    // Check if already injected
-    const already = settings.hooks[event].some((entry) =>
+    const isSync = SYNC_EVENTS.has(event)
+    const existingIdx = settings.hooks[event].findIndex((entry) =>
       entry.hooks?.some((h) => h[MARKER])
     )
-    if (already) continue
 
-    settings.hooks[event].push(makeHookEntry())
+    if (existingIdx !== -1) {
+      // Check if existing hook config matches (e.g. async flag changed)
+      const existing = settings.hooks[event][existingIdx]
+      const desired = makeHookEntry(isSync)
+      const existingAsync = existing.hooks?.[0]?.async
+      const desiredAsync = desired.hooks[0].async
+      if (existingAsync !== desiredAsync) {
+        settings.hooks[event][existingIdx] = desired
+        injected++
+      }
+      continue
+    }
+
+    settings.hooks[event].push(makeHookEntry(isSync))
     injected++
   }
 

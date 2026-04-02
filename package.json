@@ -1,6 +1,6 @@
 {
   "name": "ai-sweatshop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "🏭 Pixel-art AI agent monitor — watch your AI workers in a virtual office",
   "type": "module",
   "bin": {
@@ -9,11 +9,13 @@
   "files": [
     "bin/",
     "server/",
-    "dist/"
+    "dist/",
+    ".claude-plugin/",
+    "docs/"
   ],
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
     "start": "node bin/sweatshop.mjs",
     "lint": "eslint .",
     "preview": "vite preview"

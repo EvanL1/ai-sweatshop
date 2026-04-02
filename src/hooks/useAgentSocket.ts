@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { useOfficeStore } from '../agents/store'
 import type { AgentWorker, Desk } from '../agents/types'
-import { gridPosition } from '../agents/mockData'
+import { gridPosition, findSafeGridIndex } from '../agents/mockData'
+import { EMPTY_SKILLS, EMPTY_SKILL_XP, getToolSkillGain, applyAgentBonus } from '../skills/types'
 
 const WS_PORT = import.meta.env.VITE_WS_PORT ?? 7777
 const WS_URL = `ws://${window.location.hostname}:${WS_PORT}`
@@ -10,9 +11,11 @@ type ServerEvent =
   | { type: 'snapshot'; agents: ServerAgent[] }
   | { type: 'agent:start'; agent: ServerAgent; parentId?: string }
   | { type: 'agent:update'; agent: ServerAgent }
-  | { type: 'agent:status'; agentId: string; status: string; task: string }
+  | { type: 'agent:status'; agentId: string; status: string; task: string; toolName?: string }
   | { type: 'agent:end'; agentId: string }
   | { type: 'agent:task_completed'; agentId: string }
+  | { type: 'agent:sleep'; agentId: string }
+  | { type: 'agent:wake'; agentId: string }
 
 type ServerAgent = {
   id: string
@@ -26,7 +29,7 @@ type ServerAgent = {
 }
 
 function mapStatus(s: string): AgentWorker['status'] {
-  if (['typing', 'reading', 'running', 'idle', 'error', 'done'].includes(s)) {
+  if (['typing', 'reading', 'running', 'idle', 'error', 'done', 'offduty'].includes(s)) {
     return s as AgentWorker['status']
   }
   return 'idle'
@@ -37,12 +40,16 @@ function mapAgentType(t: string): AgentWorker['agentType'] {
   return 'claude' // default for Claude Code sessions
 }
 
-function findOrCreateDesk(desks: Record<string, Desk>): { desk: Desk; updatedDesks: Record<string, Desk> } {
+function findOrCreateDesk(
+  desks: Record<string, Desk>,
+  furniture: Record<string, import('../furniture/types').Furniture>,
+): { desk: Desk; updatedDesks: Record<string, Desk> } {
   const free = Object.values(desks).find((d) => d.assignedWorkerId === null)
   if (free) return { desk: free, updatedDesks: desks }
   const count = Object.keys(desks).length
+  const safeIdx = findSafeGridIndex(count, furniture)
   const id = `desk-${count}`
-  const newDesk: Desk = { id, position: gridPosition(count), assignedWorkerId: null }
+  const newDesk: Desk = { id, position: gridPosition(safeIdx), assignedWorkerId: null }
   return { desk: newDesk, updatedDesks: { ...desks, [id]: newDesk } }
 }
 
@@ -64,6 +71,8 @@ function serverAgentToWorker(agent: ServerAgent, isClone: boolean, desk: Desk): 
     tasksCompleted: 0,
     level: isClone ? 'intern' : 'senior',
     salaryMultiplier: 1,
+    skills: { ...EMPTY_SKILLS },
+    skillXP: { ...EMPTY_SKILL_XP },
   }
 }
 
@@ -71,7 +80,7 @@ function addServerAgent(agent: ServerAgent) {
   const isClone = !!agent.parentId
   useOfficeStore.setState((s) => {
     if (s.workers[agent.id]) return s
-    const { desk, updatedDesks } = findOrCreateDesk(s.desks)
+    const { desk, updatedDesks } = findOrCreateDesk(s.desks, s.furniture)
     const worker = serverAgentToWorker(agent, isClone, desk)
     const cloneLinks = isClone && agent.parentId
       ? [...s.cloneLinks, { parentId: agent.parentId, childId: agent.id }]
@@ -89,8 +98,8 @@ const RECONNECT_MAX_MS = 30000
 
 export function useAgentSocket() {
   const wsRef = useRef<WebSocket | null>(null)
-  const reconnectRef = useRef<ReturnType<typeof setTimeout>>()
-  const liveModeTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const liveModeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const attemptsRef = useRef(0)
 
   useEffect(() => {
@@ -144,6 +153,12 @@ export function useAgentSocket() {
 
             case 'agent:status': {
               store.updateStatus(event.agentId, mapStatus(event.status), event.task)
+              if (event.toolName) {
+                const worker = store.workers[event.agentId]
+                const { category, xp } = getToolSkillGain(event.toolName)
+                const finalXP = worker ? applyAgentBonus(worker.agentType, category, xp) : xp
+                store.addSkillXP(event.agentId, category, finalXP)
+              }
               break
             }
 
@@ -165,6 +180,18 @@ export function useAgentSocket() {
 
             case 'agent:end': {
               store.removeWorker(event.agentId)
+              break
+            }
+
+            case 'agent:sleep': {
+              store.sleepWorker(event.agentId)
+              break
+            }
+
+            case 'agent:wake': {
+              // If agent doesn't exist yet (bridge restarted and sent wake for persisted agent),
+              // fall back to treating it as a start from snapshot data.
+              store.wakeWorker(event.agentId)
               break
             }
           }
