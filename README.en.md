@@ -6,6 +6,14 @@
 
 AI Sweatshop turns your AI coding agents (Claude Code, Codex, Gemini CLI) into pixel-art office workers. Watch them code, collaborate, earn coins, and level up skills — all in a customizable virtual office powered by a Rust blockchain ledger.
 
+### Who is this for?
+
+- **Virtual pet lovers** — Promote your AI workers, level up their skills, watch an intern climb to team lead. More addictive than Tamagotchi
+- **Interior decorators** — Place desks, swap floors, add plants and coffee machines — build your dream office like The Sims
+- **Slacker spotters** — Who's actually coding? Who's grabbing coffee? Who fell asleep at their desk? More entertaining than security cams
+- **Streamers & demo-ers** — A pixel-art office as your stream overlay beats raw terminal output by a mile
+- **Multi-agent users** — Running several agents at once? See who's doing what at a glance — no more tab-switching
+
 ![screenshot](docs/screenshot.png)
 
 ## Features
