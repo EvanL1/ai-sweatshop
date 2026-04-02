@@ -1,10 +1,11 @@
 {
   "name": "ai-sweatshop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "🏭 Pixel-art AI agent monitor — watch your AI workers in a virtual office",
   "type": "module",
   "bin": {
-    "ai-sweatshop": "./bin/ai-sweatshop.mjs"
+    "ai-sweatshop": "./bin/ai-sweatshop.mjs",
+    "sweatshop": "./bin/ai-sweatshop.mjs"
   },
   "files": [
     "bin/",
