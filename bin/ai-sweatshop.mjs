@@ -19,14 +19,17 @@ const HOOK_EVENTS = [
   'SubagentStart', 'SubagentStop', 'Stop', 'SessionEnd', 'UserPromptSubmit',
 ]
 
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const ENSURE_BRIDGE = join(__dirname, 'ensure-bridge.sh')
+
 function makeHookEntry(isSync = false) {
   return {
     matcher: '*',
     hooks: [{
       type: 'command',
-      command: `cat | curl -sf -X POST ${HOOK_URL} -H 'Content-Type: application/json' --data-binary @- 2>/dev/null || true`,
+      command: `cat | ${ENSURE_BRIDGE}`,
       ...(isSync ? {} : { async: true }),
-      timeout: 3,
+      timeout: 5,
       quiet: true,
       [MARKER]: true,
     }],
@@ -136,12 +139,25 @@ if (args.includes('--mcp')) {
   await new Promise(() => {})
 }
 
+// Install-only mode — inject hooks and exit (bridge starts on-demand via ensure-bridge.sh)
+if (args.includes('--install')) {
+  console.log('🔧 Injecting hooks into Claude Code settings...')
+  const injected = injectHooks()
+  if (injected > 0) {
+    console.log(`   ✓ Injected ${injected} hook events (bridge starts on-demand)`)
+  } else {
+    console.log('   ✓ Hooks already configured')
+  }
+  process.exit(0)
+}
+
 if (args.includes('--help') || args.includes('-h')) {
   console.log(`
 🏭 Sweatshop — AI Agent Monitor
 
 Usage:
   npx sweatshop              Start the monitor (inject hooks + open UI)
+  npx sweatshop --install    Inject hooks only (bridge auto-starts on first event)
   npx sweatshop --mcp        Run as MCP server (Claude Code plugin)
   npx sweatshop --uninstall  Remove injected hooks
   npx sweatshop --no-open    Start without opening browser

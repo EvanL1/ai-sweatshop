@@ -105,7 +105,6 @@
         "hooks": [{
           "type": "command",
           "command": "cat | curl -sf -X POST http://localhost:7777/events -H 'Content-Type: application/json' --data-binary @- 2>/dev/null || true",
-          "async": true,
           "timeout": 3,
           "quiet": true
         }]

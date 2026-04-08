@@ -84,6 +84,7 @@ function broadcast(event) {
 
 // --- Map hook event to sweatshop agent event ---
 function handleHookEvent(data) {
+  resetIdleTimer()
   const sessionId = data.session_id
   if (!sessionId) return
 
@@ -442,10 +443,32 @@ wss.on('connection', (ws) => {
 const isMcp = process.env.SWEATSHOP_MCP === '1'
 const log = isMcp ? () => {} : console.log.bind(console)
 
+// --- Idle auto-shutdown (skip in MCP mode — Claude Code manages that lifecycle) ---
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
+let idleTimer = null
+
+function resetIdleTimer() {
+  if (isMcp) return
+  if (idleTimer) clearTimeout(idleTimer)
+  idleTimer = setTimeout(() => {
+    const hasActive = [...agents.values()].some(a => a.status !== 'offduty')
+    if (!hasActive && wsClients.size === 0) {
+      log('💤 No active agents or viewers — shutting down.')
+      saveAgents()
+      process.exit(0)
+    }
+    // Still active — recheck later
+    resetIdleTimer()
+  }, IDLE_TIMEOUT_MS)
+  idleTimer.unref() // don't keep process alive just for the timer
+}
+
 server.listen(PORT, () => {
   log(`🏭 Sweatshop bridge running on http://localhost:${PORT}`)
   log(`   WebSocket: ws://localhost:${PORT}`)
   log(`   Hook endpoint: POST http://localhost:${PORT}/events`)
+  log(`   Auto-shutdown after ${IDLE_TIMEOUT_MS / 60000}min idle`)
+  resetIdleTimer()
 })
 
 export { PORT }
