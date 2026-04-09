@@ -449,22 +449,44 @@ const server = createServer(async (req, res) => {
           res.end(JSON.stringify({ error: `cwd does not exist: ${cwd}` }))
           return
         }
-        const child = spawn('claude', ['-p', task, '--allowedTools', 'Edit,Read,Write,Bash,Grep,Glob'], {
-          cwd,
+        const resolvedProject = extractProject(cwd)
+        const sessionName = `sweatshop-${resolvedProject}-${Date.now()}`
+        // Spawn claude in a tmux session so it gets a TTY, is observable via
+        // `tmux attach -t <session>`, and survives bridge restarts.
+        // Hooks in ~/.claude/settings.json auto-POST to bridge /events.
+        const child = spawn('tmux', [
+          'new-session', '-d', '-s', sessionName,
+          '-c', cwd,
+          '--', 'claude', '-p', task, '--allowedTools', 'Edit,Read,Write,Bash,Grep,Glob',
+        ], {
           stdio: 'ignore',
           detached: true,
           env: { ...process.env, SWEATSHOP_PORT: String(PORT) },
         })
         child.unref()
-        const resolvedProject = extractProject(cwd)
-        log(`🚀 Dispatched task to ${resolvedProject} (pid ${child.pid}): ${task.slice(0, 80)}`)
+        log(`🚀 Dispatched to ${resolvedProject} [tmux: ${sessionName}]: ${task.slice(0, 80)}`)
         res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
-        res.end(JSON.stringify({ ok: true, pid: child.pid, project: resolvedProject }))
+        res.end(JSON.stringify({ ok: true, session: sessionName, project: resolvedProject }))
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
         res.end(JSON.stringify({ error: e.message }))
       }
     })
+    return
+  }
+
+  // GET /dispatch/sessions — list active tmux dispatch sessions
+  if (req.url === '/dispatch/sessions') {
+    try {
+      const { execSync } = await import('child_process')
+      const out = execSync('tmux list-sessions -F "#{session_name}" 2>/dev/null || true', { encoding: 'utf8' })
+      const sessions = out.split('\n').filter(s => s.startsWith('sweatshop-'))
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+      res.end(JSON.stringify({ sessions }))
+    } catch {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+      res.end(JSON.stringify({ sessions: [] }))
+    }
     return
   }
 
