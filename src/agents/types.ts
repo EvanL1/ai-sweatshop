@@ -6,14 +6,32 @@ export type Vec2 = { x: number; y: number }
 
 export type AgentType = 'claude' | 'codex' | 'gemini' | 'unknown'
 
-export type PerformanceRank = 'S' | 'A' | 'B' | 'C' | 'D'
-
 export type WorkerLevel = 'intern' | 'junior' | 'senior' | 'lead'
 
 export type Desk = {
   readonly id: string
   readonly position: Vec2
   assignedWorkerId: string | null
+}
+
+export type ToolCalls = { edits: number; reads: number; runs: number }
+
+export const EMPTY_TOOL_CALLS: ToolCalls = { edits: 0, reads: 0, runs: 0 }
+
+export function categorizeToolCall(toolName: string): keyof ToolCalls {
+  if (toolName === 'Write' || toolName === 'Edit' || toolName === 'NotebookEdit') return 'edits'
+  if (toolName === 'Read' || toolName === 'Grep' || toolName === 'Glob'
+    || toolName === 'WebSearch' || toolName === 'WebFetch') return 'reads'
+  return 'runs'
+}
+
+export function totalToolCalls(tc: ToolCalls): number {
+  return tc.edits + tc.reads + tc.runs
+}
+
+export function editRatio(tc: ToolCalls): number {
+  const total = tc.edits + tc.reads + tc.runs
+  return total > 0 ? tc.edits / total : 0
 }
 
 export type AgentWorker = {
@@ -30,7 +48,8 @@ export type AgentWorker = {
   spawnedAt: number
   isClone: boolean
   tokenUsed: number
-  tasksCompleted: number
+  toolCalls: ToolCalls
+  turnsCompleted: number
   level: WorkerLevel
   salaryMultiplier: number  // can be raised
   skills: import('../skills/types').AgentSkills
@@ -77,20 +96,3 @@ export const BASE_TOKEN_RATES: Record<AgentStatus, number> = {
   offduty: 0,
 }
 
-export function getPerformanceRank(worker: AgentWorker): PerformanceRank {
-  if (worker.tokenUsed < 500) return 'B'
-  const roi = worker.tasksCompleted / (worker.tokenUsed / 1000)
-  if (roi >= 2.0) return 'S'
-  if (roi >= 1.2) return 'A'
-  if (roi >= 0.6) return 'B'
-  if (roi >= 0.3) return 'C'
-  return 'D'
-}
-
-export const RANK_COLORS: Record<PerformanceRank, string> = {
-  S: '#fbbf24',
-  A: '#22c55e',
-  B: '#60a5fa',
-  C: '#f97316',
-  D: '#ef4444',
-}

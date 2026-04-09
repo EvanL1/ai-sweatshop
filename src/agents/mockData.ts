@@ -2,13 +2,13 @@ import type { AgentWorker, AgentType, Desk, Vec2 } from './types'
 import type { Furniture } from '../furniture/types'
 import { FURNITURE_CATALOG, TILE_SIZE, FLOOR_TYPES } from '../furniture/types'
 
-// Grid layout: 3 columns, rows grow as clones spawn
+// Grid layout: 5 columns to fill the office floor width (~1280px)
 const GRID = {
   startX: 80,
   startY: 70,
   colGap: 200,
   rowGap: 140,
-  cols: 3,
+  cols: 5,
 }
 
 export function gridPosition(index: number): Vec2 {
@@ -57,9 +57,9 @@ export function findSafeGridIndex(
 /** Door position — where new agents spawn before walking to desk */
 export const DOOR_POSITION: Vec2 = { x: 710, y: -20 }
 
-// Initial 6 desk slots (first 3 occupied)
+// Initial 10 desk slots (first 3 occupied, 2 rows × 5 cols)
 export const INITIAL_DESKS: Record<string, Desk> = Object.fromEntries(
-  Array.from({ length: 6 }, (_, i) => {
+  Array.from({ length: 10 }, (_, i) => {
     const id = `desk-${i}`
     const assignedWorkerId =
       i === 0 ? 'claude-1' : i === 1 ? 'codex-1' : i === 2 ? 'gemini-1' : null
@@ -82,7 +82,8 @@ export const MOCK_WORKERS: Record<string, AgentWorker> = {
     spawnedAt: Date.now(),
     isClone: false,
     tokenUsed: 0,
-    tasksCompleted: 0,
+    toolCalls: { edits: 0, reads: 0, runs: 0 },
+    turnsCompleted: 0,
     level: 'lead',
     salaryMultiplier: 1,
   },
@@ -100,7 +101,8 @@ export const MOCK_WORKERS: Record<string, AgentWorker> = {
     spawnedAt: Date.now(),
     isClone: false,
     tokenUsed: 0,
-    tasksCompleted: 0,
+    toolCalls: { edits: 0, reads: 0, runs: 0 },
+    turnsCompleted: 0,
     level: 'senior',
     salaryMultiplier: 1,
   },
@@ -118,7 +120,8 @@ export const MOCK_WORKERS: Record<string, AgentWorker> = {
     spawnedAt: Date.now(),
     isClone: false,
     tokenUsed: 0,
-    tasksCompleted: 0,
+    toolCalls: { edits: 0, reads: 0, runs: 0 },
+    turnsCompleted: 0,
     level: 'junior',
     salaryMultiplier: 1,
   },
