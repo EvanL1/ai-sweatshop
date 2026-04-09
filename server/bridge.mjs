@@ -4,7 +4,8 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs'
 import { join, extname } from 'path'
 import { fileURLToPath } from 'url'
 import { homedir } from 'os'
-import { spawn } from 'child_process'
+import { spawn, execFile } from 'child_process'
+import { resolve } from 'path'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const DIST_DIR = join(__dirname, '..', 'dist')
@@ -74,6 +75,22 @@ for (const agent of agents.values()) {
 }
 
 const wsClients = new Set()
+// Track active dispatch sessions per cwd (concurrency control)
+const activeDispatches = new Map() // cwd -> Set<sessionName>
+
+// CORS helper — restrict /dispatch to known origins
+const DISPATCH_ORIGINS = new Set([
+  `http://localhost:${PORT}`,
+  'http://localhost:5173',
+  `http://127.0.0.1:${PORT}`,
+  'http://127.0.0.1:5173',
+])
+function dispatchCors(req) {
+  const origin = req.headers.origin
+  return origin && DISPATCH_ORIGINS.has(origin)
+    ? { 'Access-Control-Allow-Origin': origin }
+    : {}
+}
 
 // --- WebSocket broadcast ---
 function broadcast(event) {
@@ -263,6 +280,13 @@ function handleHookEvent(data) {
         const tasks = agent.tasksCompleted || 0
         const bonus = Math.min(tasks * 50000, 500000)
         if (bonus > 0) submitTx('session_settle', agentId, bonus, 'coin', `Session settled (${tasks} tasks)`).catch(() => {})
+        // Clean up dispatched tmux session if any
+        if (agent.dispatchSession) {
+          spawn('tmux', ['kill-session', '-t', agent.dispatchSession], { stdio: 'ignore' })
+          const sessions = activeDispatches.get(agent.cwd)
+          if (sessions) { sessions.delete(agent.dispatchSession); if (sessions.size === 0) activeDispatches.delete(agent.cwd) }
+          delete agent.dispatchSession
+        }
         // Main agent goes offduty — persistent employee clocks out
         agent.status = 'offduty'
         agent.currentTask = '下班了'
@@ -419,85 +443,115 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // CORS preflight for /dispatch*
+  if (req.method === 'OPTIONS' && req.url?.startsWith('/dispatch')) {
+    const cors = dispatchCors(req)
+    res.writeHead(204, {
+      ...cors,
+      'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    })
+    res.end()
+    return
+  }
+
   // POST /dispatch — spawn claude CLI to handle a task
-  // Accepts { task, project } or { task, cwd }
-  // If project is given, resolves cwd from known agents
+  // Accepts { task, project } — resolves cwd from known agents only
   if (req.method === 'POST' && req.url === '/dispatch') {
+    const cors = dispatchCors(req)
+    const MAX_BODY = 64 * 1024
     let body = ''
-    req.on('data', (c) => { body += c })
+    req.on('data', (c) => {
+      body += c
+      if (body.length > MAX_BODY) { req.destroy(); res.writeHead(413).end(); return }
+    })
     req.on('end', () => {
       try {
-        const { task, project, cwd: explicitCwd } = JSON.parse(body)
-        if (!task) {
-          res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+        const { task, project } = JSON.parse(body)
+        if (!task || typeof task !== 'string' || task.trim().length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json', ...cors })
           res.end(JSON.stringify({ error: 'task is required' }))
           return
         }
-        // Resolve cwd: explicit > lookup by project from known agents
-        let cwd = explicitCwd
-        if (!cwd && project) {
+        if (task.length > 4096) {
+          res.writeHead(400, { 'Content-Type': 'application/json', ...cors })
+          res.end(JSON.stringify({ error: 'task too long (max 4096 chars)' }))
+          return
+        }
+        // Resolve cwd only from known agents — no arbitrary paths accepted
+        let cwd = null
+        if (project) {
           const agent = [...agents.values()].find(a => a.project === project && a.cwd)
           if (agent) cwd = agent.cwd
         }
         if (!cwd) {
-          res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
-          res.end(JSON.stringify({ error: 'Could not resolve cwd. Provide cwd or a known project name.' }))
+          res.writeHead(400, { 'Content-Type': 'application/json', ...cors })
+          res.end(JSON.stringify({ error: 'Unknown project. Agent must have connected at least once.' }))
           return
         }
+        cwd = resolve(cwd) // normalize path
         if (!existsSync(cwd)) {
-          res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
-          res.end(JSON.stringify({ error: `cwd does not exist: ${cwd}` }))
+          res.writeHead(400, { 'Content-Type': 'application/json', ...cors })
+          res.end(JSON.stringify({ error: 'Project directory no longer exists' }))
+          return
+        }
+        // Concurrency guard: max 1 dispatch per cwd
+        const active = activeDispatches.get(cwd)
+        if (active && active.size > 0) {
+          res.writeHead(409, { 'Content-Type': 'application/json', ...cors })
+          res.end(JSON.stringify({ error: 'A dispatch is already active for this project', sessions: [...active] }))
           return
         }
         const resolvedProject = extractProject(cwd)
-        const sessionName = `sweatshop-${resolvedProject}-${Date.now()}`
-        // Spawn claude in a tmux session so it gets a TTY, is observable via
-        // `tmux attach -t <session>`, and survives bridge restarts.
-        // Hooks in ~/.claude/settings.json auto-POST to bridge /events.
+        const safeProject = resolvedProject.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 40)
+        const sessionName = `sweatshop-${safeProject}-${Date.now()}`
+        // Minimal env — don't leak secrets to child
+        const childEnv = {
+          HOME: process.env.HOME,
+          PATH: process.env.PATH,
+          TERM: process.env.TERM || 'xterm-256color',
+          SHELL: process.env.SHELL || '/bin/bash',
+          SWEATSHOP_PORT: String(PORT),
+        }
+        // Spawn claude in a tmux session: observable, detached, TTY-attached.
+        // No Bash in allowedTools — edits only, no shell execution.
         const child = spawn('tmux', [
           'new-session', '-d', '-s', sessionName,
           '-c', cwd,
-          '--', 'claude', '-p', task, '--allowedTools', 'Edit,Read,Write,Bash,Grep,Glob',
+          '--', 'claude', '-p', task.slice(0, 4096), '--allowedTools', 'Edit,Read,Write,Grep,Glob',
         ], {
           stdio: 'ignore',
           detached: true,
-          env: { ...process.env, SWEATSHOP_PORT: String(PORT) },
+          env: childEnv,
         })
+        child.on('error', (err) => log(`dispatch spawn error: ${err.message}`))
         child.unref()
-        log(`🚀 Dispatched to ${resolvedProject} [tmux: ${sessionName}]: ${task.slice(0, 80)}`)
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+        // Track active dispatch
+        if (!activeDispatches.has(cwd)) activeDispatches.set(cwd, new Set())
+        activeDispatches.get(cwd).add(sessionName)
+        // Tag the agent record so SessionEnd can clean up the tmux session
+        const agentRecord = [...agents.values()].find(a => a.cwd === cwd && !a.parentId)
+        if (agentRecord) agentRecord.dispatchSession = sessionName
+        log(`Dispatched to ${resolvedProject} [tmux: ${sessionName}]: ${task.slice(0, 80)}`)
+        res.writeHead(200, { 'Content-Type': 'application/json', ...cors })
         res.end(JSON.stringify({ ok: true, session: sessionName, project: resolvedProject }))
       } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
-        res.end(JSON.stringify({ error: e.message }))
+        log(`dispatch error: ${e.message}`)
+        res.writeHead(400, { 'Content-Type': 'application/json', ...cors })
+        res.end(JSON.stringify({ error: 'Failed to dispatch task' }))
       }
     })
     return
   }
 
   // GET /dispatch/sessions — list active tmux dispatch sessions
-  if (req.url === '/dispatch/sessions') {
-    try {
-      const { execSync } = await import('child_process')
-      const out = execSync('tmux list-sessions -F "#{session_name}" 2>/dev/null || true', { encoding: 'utf8' })
-      const sessions = out.split('\n').filter(s => s.startsWith('sweatshop-'))
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+  if (req.method === 'GET' && req.url === '/dispatch/sessions') {
+    const cors = dispatchCors(req)
+    execFile('tmux', ['list-sessions', '-F', '#{session_name}'], { encoding: 'utf8' }, (err, stdout) => {
+      const sessions = err ? [] : stdout.split('\n').filter(s => s.startsWith('sweatshop-'))
+      res.writeHead(200, { 'Content-Type': 'application/json', ...cors })
       res.end(JSON.stringify({ sessions }))
-    } catch {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
-      res.end(JSON.stringify({ sessions: [] }))
-    }
-    return
-  }
-
-  // CORS preflight for /dispatch
-  if (req.method === 'OPTIONS' && req.url === '/dispatch') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
     })
-    res.end()
     return
   }
 
