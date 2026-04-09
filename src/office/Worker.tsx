@@ -2,7 +2,7 @@ import { useCallback, useRef, useEffect } from 'react'
 import { useTick } from '@pixi/react'
 import type { Graphics as PixiGraphics, FederatedPointerEvent } from 'pixi.js'
 import type { AgentWorker } from '../agents/types'
-import { getPerformanceRank, RANK_COLORS, LEVEL_MULTIPLIER, LEVEL_ORDER } from '../agents/types'
+import { LEVEL_MULTIPLIER, LEVEL_ORDER, editRatio, totalToolCalls } from '../agents/types'
 import { useOfficeStore } from '../agents/store'
 import { SpeechBubble } from './SpeechBubble'
 import { SkillLevelUp } from './SkillLevelUp'
@@ -74,9 +74,12 @@ export function Worker({ worker, isSelected }: Props) {
   const facing = getFacing(worker.status)
   const isWorking = facing === 'back'
   const isOffduty = facing === 'offduty'
-  const rank = getPerformanceRank(worker)
-  const rankHex = parseInt(RANK_COLORS[rank].slice(1), 16)
-
+  const total = totalToolCalls(worker.toolCalls)
+  const ratio = editRatio(worker.toolCalls)
+  const glowColor = total === 0 || isOffduty ? -1
+    : ratio >= 0.4 ? 0x22c55e
+    : ratio >= 0.15 ? 0x60a5fa
+    : 0xf97316
   // Animation state — all refs to avoid per-frame React re-renders
   const animTime = useRef(Math.random() * 10)
   const bodyBobRef = useRef(0)
@@ -125,6 +128,14 @@ export function Worker({ worker, isSelected }: Props) {
 
   const drawWorker = useCallback((g: PixiGraphics) => {
     g.clear()
+
+      // === HEATMAP GLOW (behind everything) ===
+      if (glowColor >= 0) {
+        g.setFillStyle({ color: glowColor, alpha: 0.12 })
+        g.roundRect(-4, -4, DESK_W + 8, DESK_Y + DESK_H + PERSON_Y + 20, 6)
+        g.fill()
+      }
+
     const bodyBob = bodyBobRef.current
     const handPhase = handPhaseRef.current
     const eyeOpen = eyeOpenRef.current
@@ -362,28 +373,24 @@ export function Worker({ worker, isSelected }: Props) {
       g.roundRect(UNIT_CENTER_X - tagW / 2, py + HEAD_SIZE + BODY_H + 12, tagW, 12, 2)
       g.fill()
 
-      // === RANK BADGE (top-right of workstation) ===
-      if (worker.tokenUsed > 500) {
-        const badgeX = DESK_W - 14
-        const badgeY = MONITOR_Y - 2
-        // badge background
-        g.setFillStyle({ color: 0x000000, alpha: 0.7 })
-        g.roundRect(badgeX - 1, badgeY - 1, 16, 14, 2)
-        g.fill()
-        // rank color indicator
-        g.setFillStyle({ color: rankHex })
-        g.roundRect(badgeX, badgeY, 14, 12, 2)
-        g.fill()
-      }
-
-      // === TASK COUNTER (left of monitor) ===
-      if (worker.tasksCompleted > 0) {
+      // === TOOL CALL BARS (left of monitor): edits / reads / runs ===
+      const tc = worker.toolCalls
+      const tcTotal = tc.edits + tc.reads + tc.runs
+      if (tcTotal > 0) {
+        const barW = 22
+        const barY = MONITOR_Y
         g.setFillStyle({ color: 0x000000, alpha: 0.5 })
-        g.roundRect(2, MONITOR_Y, 22, 10, 2)
+        g.roundRect(2, barY, barW, 10, 2)
         g.fill()
-        g.setFillStyle({ color: 0x22c55e, alpha: 0.8 })
-        g.roundRect(3, MONITOR_Y + 1, Math.min(20, worker.tasksCompleted * 2), 8, 1)
-        g.fill()
+        // Stacked bar: edits (green) | reads (blue) | runs (orange)
+        const scale = Math.min(1, tcTotal / 20)
+        const eW = Math.round((tc.edits / tcTotal) * barW * scale)
+        const rW = Math.round((tc.reads / tcTotal) * barW * scale)
+        const xW = Math.round((tc.runs / tcTotal) * barW * scale)
+        let bx = 3
+        if (eW > 0) { g.setFillStyle({ color: 0x22c55e, alpha: 0.8 }); g.rect(bx, barY + 1, eW, 8); g.fill(); bx += eW }
+        if (rW > 0) { g.setFillStyle({ color: 0x60a5fa, alpha: 0.8 }); g.rect(bx, barY + 1, rW, 8); g.fill(); bx += rW }
+        if (xW > 0) { g.setFillStyle({ color: 0xf97316, alpha: 0.8 }); g.rect(bx, barY + 1, xW, 8); g.fill() }
       }
 
       // === SKILL BARS (below name plate) ===
@@ -408,7 +415,7 @@ export function Worker({ worker, isSelected }: Props) {
         })
       }
   }, [color, hairColor, facing, isWorking, isOffduty, isSelected, worker.isClone, worker.id,
-     rankHex, worker.tokenUsed, worker.tasksCompleted, worker.level, worker.skills])
+     worker.toolCalls, worker.level, worker.skills, glowColor])
 
   const openContextMenu = useOfficeStore((s) => s.openContextMenu)
 
