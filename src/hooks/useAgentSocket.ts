@@ -3,6 +3,7 @@ import { useOfficeStore } from '../agents/store'
 import type { AgentWorker, Desk } from '../agents/types'
 import { gridPosition, findSafeGridIndex } from '../agents/mockData'
 import { EMPTY_SKILLS, EMPTY_SKILL_XP, getToolSkillGain, applyAgentBonus } from '../skills/types'
+import { EMPTY_TOOL_CALLS, categorizeToolCall } from '../agents/types'
 
 const WS_PORT = import.meta.env.VITE_WS_PORT ?? 7777
 const WS_URL = `ws://${window.location.hostname}:${WS_PORT}`
@@ -11,9 +12,9 @@ type ServerEvent =
   | { type: 'snapshot'; agents: ServerAgent[] }
   | { type: 'agent:start'; agent: ServerAgent; parentId?: string }
   | { type: 'agent:update'; agent: ServerAgent }
-  | { type: 'agent:status'; agentId: string; status: string; task: string; toolName?: string }
+  | { type: 'agent:status'; agentId: string; status: string; task: string; toolName?: string; turns?: number }
   | { type: 'agent:end'; agentId: string }
-  | { type: 'agent:task_completed'; agentId: string }
+  | { type: 'agent:task_completed'; agentId: string; toolName?: string }
   | { type: 'agent:sleep'; agentId: string }
   | { type: 'agent:wake'; agentId: string }
 
@@ -26,6 +27,7 @@ type ServerAgent = {
   status: string
   currentTask: string
   project: string
+  turnsCompleted?: number
 }
 
 function mapStatus(s: string): AgentWorker['status'] {
@@ -68,7 +70,8 @@ function serverAgentToWorker(agent: ServerAgent, isClone: boolean, desk: Desk): 
     spawnedAt: Date.now(),
     isClone,
     tokenUsed: 0,
-    tasksCompleted: 0,
+    toolCalls: { ...EMPTY_TOOL_CALLS },
+    turnsCompleted: agent.turnsCompleted || 0,
     level: isClone ? 'intern' : 'senior',
     salaryMultiplier: 1,
     skills: { ...EMPTY_SKILLS },
@@ -159,21 +162,33 @@ export function useAgentSocket() {
                 const finalXP = worker ? applyAgentBonus(worker.agentType, category, xp) : xp
                 store.addSkillXP(event.agentId, category, finalXP)
               }
+              if (event.turns !== undefined) {
+                useOfficeStore.setState((s) => {
+                  const w = s.workers[event.agentId]
+                  if (!w) return s
+                  return { workers: { ...s.workers, [event.agentId]: { ...w, turnsCompleted: event.turns! } } }
+                })
+              }
               break
             }
 
             case 'agent:task_completed': {
               const w = store.workers[event.agentId]
-              if (w) {
-                useOfficeStore.setState((s) => ({
-                  workers: {
-                    ...s.workers,
-                    [event.agentId]: {
-                      ...s.workers[event.agentId],
-                      tasksCompleted: s.workers[event.agentId].tasksCompleted + 1,
+              if (w && event.toolName) {
+                const cat = categorizeToolCall(event.toolName)
+                useOfficeStore.setState((s) => {
+                  const worker = s.workers[event.agentId]
+                  if (!worker) return s
+                  return {
+                    workers: {
+                      ...s.workers,
+                      [event.agentId]: {
+                        ...worker,
+                        toolCalls: { ...worker.toolCalls, [cat]: worker.toolCalls[cat] + 1 },
+                      },
                     },
-                  },
-                }))
+                  }
+                })
               }
               break
             }

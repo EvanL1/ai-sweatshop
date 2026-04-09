@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { AgentWorker, AgentStatus, CloneLink, Vec2, Desk } from './types'
-import { BASE_TOKEN_RATES, BASE_SALARY, LEVEL_MULTIPLIER, LEVEL_ORDER } from './types'
+import { BASE_TOKEN_RATES, BASE_SALARY, LEVEL_MULTIPLIER, LEVEL_ORDER, EMPTY_TOOL_CALLS, totalToolCalls } from './types'
 import {
   gridPosition, findSafeGridIndex,
 } from './mockData'
@@ -19,6 +19,7 @@ type OfficeStore = {
   scrollY: number
   unlimitedMode: boolean
   liveMode: boolean
+  sidebarTab: 'people' | 'project'
   wsStatus: 'connected' | 'connecting' | 'disconnected'
   tokenPool: number
   tokenPoolUsed: number
@@ -39,6 +40,7 @@ type OfficeStore = {
   setScrollY: (y: number) => void
   toggleUnlimited: () => void
   setLiveMode: (live: boolean) => void
+  setSidebarTab: (tab: 'people' | 'project') => void
   setWsStatus: (status: 'connected' | 'connecting' | 'disconnected') => void
   moveWorker: (id: string, pos: Vec2) => void
   updateStatus: (id: string, status: AgentStatus, task: string) => void
@@ -152,6 +154,7 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
   scrollY: 0,
   unlimitedMode: false,
   liveMode: false,
+  sidebarTab: 'people',
   wsStatus: 'connecting',
   tokenPool: INITIAL_POOL,
   tokenPoolUsed: 0,
@@ -170,6 +173,7 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
   setScrollY: (y) => set({ scrollY: y }),
   toggleUnlimited: () => set((s) => ({ unlimitedMode: !s.unlimitedMode })),
   setLiveMode: (live) => set({ liveMode: live }),
+  setSidebarTab: (tab) => set({ sidebarTab: tab }),
   setWsStatus: (status) => set({ wsStatus: status }),
 
   moveWorker: (id, pos) =>
@@ -181,15 +185,12 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
     set((s) => {
       const w = s.workers[id]
       if (!w) return s
-      const wasActive = w.status === 'typing' || w.status === 'running'
-      const taskChanged = w.currentTask !== task && wasActive
       return {
         workers: {
           ...s.workers,
           [id]: {
             ...w, status, currentTask: task,
             animation: status === 'typing' || status === 'running' ? 'typing' : 'idle',
-            tasksCompleted: w.tasksCompleted + (taskChanged ? 1 : 0),
           },
         },
       }
@@ -303,7 +304,8 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
       spawnedAt: Date.now(),
       isClone: true,
       tokenUsed: 0,
-      tasksCompleted: 0,
+      toolCalls: { ...EMPTY_TOOL_CALLS },
+      turnsCompleted: 0,
       level: 'intern',
       salaryMultiplier: 1,
       skills: { ...EMPTY_SKILLS },
@@ -339,8 +341,10 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
       const clones = Object.values(updatedWorkers).filter((w) => w.isClone)
       if (clones.length > 0) {
         const worst = clones.reduce((a, b) => {
-          const roiA = a.tokenUsed > 0 ? a.tasksCompleted / a.tokenUsed : 0
-          const roiB = b.tokenUsed > 0 ? b.tasksCompleted / b.tokenUsed : 0
+          const totalA = totalToolCalls(a.toolCalls)
+          const totalB = totalToolCalls(b.toolCalls)
+          const roiA = a.tokenUsed > 0 ? totalA / a.tokenUsed : 0
+          const roiB = b.tokenUsed > 0 ? totalB / b.tokenUsed : 0
           return roiA < roiB ? a : b
         })
         get().removeWorker(worst.id)
