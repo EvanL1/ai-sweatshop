@@ -1,11 +1,12 @@
 import { type ReactNode, useState, useEffect } from 'react'
 import type { AgentWorker } from '../agents/types'
 import { useOfficeStore } from '../agents/store'
-import { getPerformanceRank, RANK_COLORS } from '../agents/types'
 import { AgentCard } from './AgentCard'
 import { EventFeed } from './EventFeed'
 import { BuildPanel } from './BuildPanel'
 import { FurnitureDetail } from './FurnitureDetail'
+import { TabBar } from './TabBar'
+import { ProjectTab } from './ProjectTab'
 
 function renderTree(all: AgentWorker[], parentId: string | null, depth: number): ReactNode[] {
   const children = all.filter((w) => w.parentId === parentId)
@@ -41,6 +42,7 @@ export function Sidebar() {
   const wsStatus = useOfficeStore((s) => s.wsStatus)
   const buildMode = useOfficeStore((s) => s.buildMode)
   const setBuildMode = useOfficeStore((s) => s.setBuildMode)
+  const sidebarTab = useOfficeStore((s) => s.sidebarTab)
 
   const sorted = Object.values(workers).sort((a, b) => {
     // Offduty agents go to the bottom
@@ -55,16 +57,6 @@ export function Sidebar() {
   const mainCount = sorted.filter((w) => !w.isClone).length
   const cloneCount = sorted.filter((w) => w.isClone).length
   const poolPct = tokenPool > 0 ? tokenPoolUsed / tokenPool : 0
-
-  // Leaderboard: sort by ROI
-  const ranked = [...sorted]
-    .filter((w) => w.tokenUsed > 500)
-    .sort((a, b) => {
-      const roiA = a.tokenUsed > 0 ? a.tasksCompleted / a.tokenUsed : 0
-      const roiB = b.tokenUsed > 0 ? b.tasksCompleted / b.tokenUsed : 0
-      return roiB - roiA
-    })
-    .slice(0, 5)
 
   return (
     <div className="flex flex-col h-full">
@@ -113,6 +105,7 @@ export function Sidebar() {
 
       {buildMode && <BuildPanel />}
       <FurnitureDetail />
+      <TabBar />
 
       {/* Shared pool */}
       {!unlimited && (
@@ -136,39 +129,13 @@ export function Sidebar() {
       {/* Economy stats */}
       <EconomyPanel />
 
-      {/* Performance leaderboard */}
-      {ranked.length > 0 && (
-        <div className="mb-3 px-2 py-1.5 bg-[#1a2744] rounded">
-          <p className="text-[12px] font-mono text-[#e94560] font-bold mb-1">PERFORMANCE</p>
-          {ranked.map((w, i) => {
-            const rank = getPerformanceRank(w)
-            const roi = w.tokenUsed > 0 ? (w.tasksCompleted / (w.tokenUsed / 1000)).toFixed(1) : '—'
-            return (
-              <div key={w.id} className="flex items-center justify-between text-[11px] font-mono py-0.5">
-                <div className="flex items-center gap-1">
-                  <span className="text-[#666688] w-3">{i + 1}.</span>
-                  <span
-                    className="font-bold w-4 text-center"
-                    style={{ color: RANK_COLORS[rank] }}
-                  >
-                    {rank}
-                  </span>
-                  <span className="text-[#b0b0c0] truncate max-w-[80px]">{w.name}</span>
-                </div>
-                <div className="flex items-center gap-2 text-[#666688]">
-                  <span>{w.tasksCompleted} tasks</span>
-                  <span>ROI {roi}</span>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
       <EventFeed />
 
       <div className="flex-1 overflow-y-auto space-y-1">
-        {renderTree(sorted, null, 0)}
+        {sidebarTab === 'people'
+          ? renderTree(sorted, null, 0)
+          : <ProjectTab />
+        }
       </div>
 
       <div className="mt-4 pt-3 border-t border-[#0f3460]">
