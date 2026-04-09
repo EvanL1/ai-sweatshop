@@ -1,6 +1,6 @@
 import { useOfficeStore } from '../agents/store'
 import { FURNITURE_CATALOG } from '../furniture/types'
-import { getPerformanceRank, RANK_COLORS } from '../agents/types'
+import { totalToolCalls } from '../agents/types'
 
 export function FurnitureDetail() {
   const selectedId = useOfficeStore((s) => s.selectedFurnitureId)

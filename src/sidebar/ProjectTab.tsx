@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useOfficeStore } from '../agents/store'
 import { editRatio, totalToolCalls } from '../agents/types'
 import type { AgentWorker, CloneLink, ToolCalls } from '../agents/types'
@@ -75,10 +75,68 @@ function RatioBadge({ ratio }: { ratio: number }) {
   )
 }
 
+const WS_PORT = import.meta.env.VITE_WS_PORT ?? 7777
+
+function DispatchInput({ project, onClose }: { project: string; onClose: () => void }) {
+  const [task, setTask] = useState('')
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+
+  const dispatch = async () => {
+    if (!task.trim()) return
+    setStatus('sending')
+    try {
+      const res = await fetch(`http://${window.location.hostname}:${WS_PORT}/dispatch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project, task: task.trim() }),
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setStatus('sent')
+        setTimeout(onClose, 1500)
+      } else {
+        setStatus('error')
+      }
+    } catch {
+      setStatus('error')
+    }
+  }
+
+  return (
+    <div className="mt-1.5 space-y-1">
+      <textarea
+        className="w-full bg-[#0f1729] border border-[#0f3460] rounded px-2 py-1 text-[11px] font-mono text-[#b0b0c0] resize-none focus:border-[#e94560] outline-none"
+        rows={2}
+        placeholder="描述任务..."
+        value={task}
+        onChange={(e) => setTask(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); dispatch() } }}
+        autoFocus
+      />
+      <div className="flex gap-1">
+        <button
+          className="flex-1 px-2 py-1 rounded text-[11px] font-mono font-bold bg-[#e94560]/20 border border-[#e94560]/50 text-[#e94560] hover:bg-[#e94560]/30 disabled:opacity-50"
+          onClick={dispatch}
+          disabled={!task.trim() || status === 'sending'}
+        >
+          {status === 'sending' ? '派发中...' : status === 'sent' ? '✓ 已派发' : '派活'}
+        </button>
+        <button
+          className="px-2 py-1 rounded text-[11px] font-mono text-[#6b7280] hover:text-[#b0b0c0]"
+          onClick={onClose}
+        >
+          取消
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function ProjectTab() {
   const workers = useOfficeStore((s) => s.workers)
   const cloneLinks = useOfficeStore((s) => s.cloneLinks)
   const projects = useMemo(() => deriveProjects(workers, cloneLinks), [workers, cloneLinks])
+  const [dispatchingProject, setDispatchingProject] = useState<string | null>(null)
 
   if (projects.length === 0) {
     return <p className="text-[11px] font-mono text-[#6b7280] px-2">暂无项目数据</p>
@@ -93,7 +151,16 @@ export function ProjectTab() {
         >
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-mono font-bold text-[#e0e0f0]">{p.project}</span>
-            {p.hasActive && <span className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />}
+            <div className="flex items-center gap-1.5">
+              {p.hasActive && <span className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />}
+              <button
+                className="text-[10px] font-mono text-[#e94560] hover:text-[#ff6b81]"
+                onClick={() => setDispatchingProject(dispatchingProject === p.project ? null : p.project)}
+                title="派活给 Agent"
+              >
+                🚀
+              </button>
+            </div>
           </div>
           <div className="text-[11px] font-mono text-[#8888a8]">
             ✏️{p.toolCalls.edits} · 📖{p.toolCalls.reads} · ⚡{p.toolCalls.runs}
@@ -125,6 +192,9 @@ export function ProjectTab() {
               └─ {a.name}: ✏️{a.toolCalls.edits} 📖{a.toolCalls.reads} ⚡{a.toolCalls.runs}
             </div>
           ))}
+          {dispatchingProject === p.project && (
+            <DispatchInput project={p.project} onClose={() => setDispatchingProject(null)} />
+          )}
         </div>
       ))}
     </div>

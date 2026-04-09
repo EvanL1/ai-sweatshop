@@ -4,6 +4,7 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs'
 import { join, extname } from 'path'
 import { fileURLToPath } from 'url'
 import { homedir } from 'os'
+import { spawn } from 'child_process'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const DIST_DIR = join(__dirname, '..', 'dist')
@@ -415,6 +416,66 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
       res.end(JSON.stringify([]))
     }
+    return
+  }
+
+  // POST /dispatch — spawn claude CLI to handle a task
+  // Accepts { task, project } or { task, cwd }
+  // If project is given, resolves cwd from known agents
+  if (req.method === 'POST' && req.url === '/dispatch') {
+    let body = ''
+    req.on('data', (c) => { body += c })
+    req.on('end', () => {
+      try {
+        const { task, project, cwd: explicitCwd } = JSON.parse(body)
+        if (!task) {
+          res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+          res.end(JSON.stringify({ error: 'task is required' }))
+          return
+        }
+        // Resolve cwd: explicit > lookup by project from known agents
+        let cwd = explicitCwd
+        if (!cwd && project) {
+          const agent = [...agents.values()].find(a => a.project === project && a.cwd)
+          if (agent) cwd = agent.cwd
+        }
+        if (!cwd) {
+          res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+          res.end(JSON.stringify({ error: 'Could not resolve cwd. Provide cwd or a known project name.' }))
+          return
+        }
+        if (!existsSync(cwd)) {
+          res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+          res.end(JSON.stringify({ error: `cwd does not exist: ${cwd}` }))
+          return
+        }
+        const child = spawn('claude', ['-p', task, '--allowedTools', 'Edit,Read,Write,Bash,Grep,Glob'], {
+          cwd,
+          stdio: 'ignore',
+          detached: true,
+          env: { ...process.env, SWEATSHOP_PORT: String(PORT) },
+        })
+        child.unref()
+        const resolvedProject = extractProject(cwd)
+        log(`🚀 Dispatched task to ${resolvedProject} (pid ${child.pid}): ${task.slice(0, 80)}`)
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+        res.end(JSON.stringify({ ok: true, pid: child.pid, project: resolvedProject }))
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+        res.end(JSON.stringify({ error: e.message }))
+      }
+    })
+    return
+  }
+
+  // CORS preflight for /dispatch
+  if (req.method === 'OPTIONS' && req.url === '/dispatch') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    })
+    res.end()
     return
   }
 
