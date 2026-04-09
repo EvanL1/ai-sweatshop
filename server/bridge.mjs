@@ -4,7 +4,7 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs'
 import { join, extname } from 'path'
 import { fileURLToPath } from 'url'
 import { homedir } from 'os'
-import { spawn, execFile } from 'child_process'
+import { spawn } from 'child_process'
 import { resolve } from 'path'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
@@ -75,21 +75,12 @@ for (const agent of agents.values()) {
 }
 
 const wsClients = new Set()
-// Track active dispatch sessions per cwd (concurrency control)
-const activeDispatches = new Map() // cwd -> Set<sessionName>
+// Track active dispatch sessions: cwd -> { session, cli, status }
+const dispatchSessions = new Map()
 
-// CORS helper — restrict /dispatch to known origins
-const DISPATCH_ORIGINS = new Set([
-  `http://localhost:${PORT}`,
-  'http://localhost:5173',
-  `http://127.0.0.1:${PORT}`,
-  'http://127.0.0.1:5173',
-])
-function dispatchCors(req) {
-  const origin = req.headers.origin
-  return origin && DISPATCH_ORIGINS.has(origin)
-    ? { 'Access-Control-Allow-Origin': origin }
-    : {}
+// CORS helper — allow any origin (bridge is a LAN/internal tool)
+function dispatchCors() {
+  return { 'Access-Control-Allow-Origin': '*' }
 }
 
 // --- WebSocket broadcast ---
@@ -117,7 +108,7 @@ function handleHookEvent(data) {
 
   switch (event) {
     case 'SessionStart': {
-      const cwd = data.cwd
+      const cwd = data.cwd ? resolve(data.cwd) : data.cwd
       // Check if we have a persistent agent for this cwd
       const persistentId = cwdIndex.get(cwd)
       if (persistentId && agents.has(persistentId)) {
@@ -182,7 +173,7 @@ function handleHookEvent(data) {
           agentType: detectAgentType(data),
           parentId: null,
           status, currentTask: task,
-          project: extractProject(data.cwd), cwd: data.cwd,
+          project: extractProject(data.cwd), cwd: data.cwd ? resolve(data.cwd) : data.cwd,
           startedAt: Date.now(),
           turnsCompleted: 0,
         })
@@ -243,7 +234,7 @@ function handleHookEvent(data) {
           parentId: parentPersistentId,
           status: 'running',
           currentTask: `Subagent ${data.agent_type} starting...`,
-          project: extractProject(data.cwd), cwd: data.cwd,
+          project: extractProject(data.cwd), cwd: data.cwd ? resolve(data.cwd) : data.cwd,
           startedAt: Date.now(),
         })
         broadcast({ type: 'agent:start', agent: agents.get(subId), parentId: parentPersistentId })
@@ -280,12 +271,18 @@ function handleHookEvent(data) {
         const tasks = agent.tasksCompleted || 0
         const bonus = Math.min(tasks * 50000, 500000)
         if (bonus > 0) submitTx('session_settle', agentId, bonus, 'coin', `Session settled (${tasks} tasks)`).catch(() => {})
-        // Clean up dispatched tmux session if any
-        if (agent.dispatchSession) {
-          spawn('tmux', ['kill-session', '-t', agent.dispatchSession], { stdio: 'ignore' })
-          const sessions = activeDispatches.get(agent.cwd)
-          if (sessions) { sessions.delete(agent.dispatchSession); if (sessions.size === 0) activeDispatches.delete(agent.cwd) }
-          delete agent.dispatchSession
+        // Clean up dispatch session for this cwd (may be on this agent or a dispatched sibling)
+        const cwdNorm = agent.cwd ? resolve(agent.cwd) : null
+        if (cwdNorm && dispatchSessions.has(cwdNorm)) {
+          const info = dispatchSessions.get(cwdNorm)
+          spawn('tmux', ['kill-session', '-t', info.session], { stdio: 'ignore' })
+          dispatchSessions.delete(cwdNorm)
+        }
+        // Clear dispatchSession tag from all agents sharing this cwd
+        if (cwdNorm) {
+          for (const a of agents.values()) {
+            if (a.cwd && resolve(a.cwd) === cwdNorm && a.dispatchSession) delete a.dispatchSession
+          }
         }
         // Main agent goes offduty — persistent employee clocks out
         agent.status = 'offduty'
@@ -445,7 +442,7 @@ const server = createServer(async (req, res) => {
 
   // CORS preflight for /dispatch*
   if (req.method === 'OPTIONS' && req.url?.startsWith('/dispatch')) {
-    const cors = dispatchCors(req)
+    const cors = dispatchCors()
     res.writeHead(204, {
       ...cors,
       'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
@@ -455,10 +452,10 @@ const server = createServer(async (req, res) => {
     return
   }
 
-  // POST /dispatch — spawn claude CLI to handle a task
-  // Accepts { task, project } — resolves cwd from known agents only
+  // POST /dispatch — interactive tmux dispatch with send-keys support
+  // Accepts { task, project?, agentId?, cli: "claude"|"codex" }
   if (req.method === 'POST' && req.url === '/dispatch') {
-    const cors = dispatchCors(req)
+    const cors = dispatchCors()
     const MAX_BODY = 64 * 1024
     let body = ''
     req.on('data', (c) => {
@@ -467,7 +464,7 @@ const server = createServer(async (req, res) => {
     })
     req.on('end', () => {
       try {
-        const { task, project } = JSON.parse(body)
+        const { task, project, agentId, cli } = JSON.parse(body)
         if (!task || typeof task !== 'string' || task.trim().length === 0) {
           res.writeHead(400, { 'Content-Type': 'application/json', ...cors })
           res.end(JSON.stringify({ error: 'task is required' }))
@@ -478,34 +475,70 @@ const server = createServer(async (req, res) => {
           res.end(JSON.stringify({ error: 'task too long (max 4096 chars)' }))
           return
         }
-        // Resolve cwd only from known agents — no arbitrary paths accepted
+        const cliTool = cli === 'codex' ? 'codex' : 'claude'
+        // Resolve cwd: agentId takes priority, then project
         let cwd = null
-        if (project) {
-          const agent = [...agents.values()].find(a => a.project === project && a.cwd)
-          if (agent) cwd = agent.cwd
+        let targetAgent = null
+        if (agentId) {
+          targetAgent = agents.get(agentId)
+          if (targetAgent?.cwd) cwd = targetAgent.cwd
+        }
+        if (!cwd && project) {
+          targetAgent = [...agents.values()].find(a => a.project === project && a.cwd)
+          if (targetAgent) cwd = targetAgent.cwd
         }
         if (!cwd) {
           res.writeHead(400, { 'Content-Type': 'application/json', ...cors })
-          res.end(JSON.stringify({ error: 'Unknown project. Agent must have connected at least once.' }))
+          res.end(JSON.stringify({ error: 'Unknown target. Agent must have connected at least once.' }))
           return
         }
-        cwd = resolve(cwd) // normalize path
+        cwd = resolve(cwd)
         if (!existsSync(cwd)) {
           res.writeHead(400, { 'Content-Type': 'application/json', ...cors })
           res.end(JSON.stringify({ error: 'Project directory no longer exists' }))
           return
         }
-        // Concurrency guard: max 1 dispatch per cwd
-        const active = activeDispatches.get(cwd)
-        if (active && active.size > 0) {
-          res.writeHead(409, { 'Content-Type': 'application/json', ...cors })
-          res.end(JSON.stringify({ error: 'A dispatch is already active for this project', sessions: [...active] }))
+        const resolvedProject = extractProject(cwd)
+
+        // Check for existing tmux session on this cwd
+        const existing = dispatchSessions.get(cwd)
+        if (existing) {
+          // Append task to existing session via send-keys
+          // Check if agent is idle (safe to send new task)
+          const agentRecord = [...agents.values()].find(a => a.cwd === cwd && !a.parentId)
+          if (agentRecord && agentRecord.status !== 'idle' && agentRecord.status !== 'offduty') {
+            res.writeHead(409, { 'Content-Type': 'application/json', ...cors })
+            res.end(JSON.stringify({ error: 'Agent is busy. Wait for current task to finish.', status: agentRecord.status }))
+            return
+          }
+          // send-keys -l for literal mode (no tmux key interpretation)
+          const sendKeys = spawn('tmux', ['send-keys', '-t', existing.session, '-l', task.slice(0, 4096)], { stdio: 'ignore' })
+          sendKeys.on('close', (code) => {
+            if (code !== 0) {
+              // Session likely dead — clean up and fall through to create new
+              dispatchSessions.delete(cwd)
+              log(`dispatch: tmux send-keys failed (code ${code}), session ${existing.session} may be dead`)
+              res.writeHead(500, { 'Content-Type': 'application/json', ...cors })
+              res.end(JSON.stringify({ error: 'Session lost. Try again to create a new one.' }))
+              return
+            }
+            // Press Enter to submit the prompt
+            spawn('tmux', ['send-keys', '-t', existing.session, 'Enter'], { stdio: 'ignore' })
+            log(`Appended to ${resolvedProject} [tmux: ${existing.session}]: ${task.slice(0, 80)}`)
+            res.writeHead(200, { 'Content-Type': 'application/json', ...cors })
+            res.end(JSON.stringify({ ok: true, session: existing.session, project: resolvedProject, mode: 'append' }))
+          })
+          sendKeys.on('error', (err) => {
+            log(`dispatch send-keys error: ${err.message}`)
+            res.writeHead(500, { 'Content-Type': 'application/json', ...cors })
+            res.end(JSON.stringify({ error: 'Failed to send keys to tmux session' }))
+          })
           return
         }
-        const resolvedProject = extractProject(cwd)
+
+        // No existing session — create new interactive tmux session
         const safeProject = resolvedProject.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 40)
         const sessionName = `sweatshop-${safeProject}-${Date.now()}`
-        // Minimal env — don't leak secrets to child
         const childEnv = {
           HOME: process.env.HOME,
           PATH: process.env.PATH,
@@ -513,12 +546,11 @@ const server = createServer(async (req, res) => {
           SHELL: process.env.SHELL || '/bin/bash',
           SWEATSHOP_PORT: String(PORT),
         }
-        // Spawn claude in a tmux session: observable, detached, TTY-attached.
-        // No Bash in allowedTools — edits only, no shell execution.
+        // Start interactive CLI session (no -p flag — stays alive for send-keys)
         const child = spawn('tmux', [
           'new-session', '-d', '-s', sessionName,
           '-c', cwd,
-          '--', 'claude', '-p', task.slice(0, 4096), '--allowedTools', 'Edit,Read,Write,Grep,Glob',
+          '--', cliTool,
         ], {
           stdio: 'ignore',
           detached: true,
@@ -526,15 +558,20 @@ const server = createServer(async (req, res) => {
         })
         child.on('error', (err) => log(`dispatch spawn error: ${err.message}`))
         child.unref()
-        // Track active dispatch
-        if (!activeDispatches.has(cwd)) activeDispatches.set(cwd, new Set())
-        activeDispatches.get(cwd).add(sessionName)
-        // Tag the agent record so SessionEnd can clean up the tmux session
-        const agentRecord = [...agents.values()].find(a => a.cwd === cwd && !a.parentId)
-        if (agentRecord) agentRecord.dispatchSession = sessionName
-        log(`Dispatched to ${resolvedProject} [tmux: ${sessionName}]: ${task.slice(0, 80)}`)
+        // Track session
+        dispatchSessions.set(cwd, { session: sessionName, cli: cliTool })
+        // Tag agent record for cleanup on SessionEnd
+        if (targetAgent) targetAgent.dispatchSession = sessionName
+        // Wait briefly for CLI to initialize, then send the task
+        setTimeout(() => {
+          spawn('tmux', ['send-keys', '-t', sessionName, '-l', task.slice(0, 4096)], { stdio: 'ignore' })
+            .on('close', () => {
+              spawn('tmux', ['send-keys', '-t', sessionName, 'Enter'], { stdio: 'ignore' })
+            })
+        }, 2000)
+        log(`Dispatched to ${resolvedProject} [tmux: ${sessionName}, cli: ${cliTool}]: ${task.slice(0, 80)}`)
         res.writeHead(200, { 'Content-Type': 'application/json', ...cors })
-        res.end(JSON.stringify({ ok: true, session: sessionName, project: resolvedProject }))
+        res.end(JSON.stringify({ ok: true, session: sessionName, project: resolvedProject, mode: 'new', cli: cliTool }))
       } catch (e) {
         log(`dispatch error: ${e.message}`)
         res.writeHead(400, { 'Content-Type': 'application/json', ...cors })
@@ -544,14 +581,22 @@ const server = createServer(async (req, res) => {
     return
   }
 
-  // GET /dispatch/sessions — list active tmux dispatch sessions
+  // GET /dispatch/sessions — list active dispatch sessions with status
   if (req.method === 'GET' && req.url === '/dispatch/sessions') {
-    const cors = dispatchCors(req)
-    execFile('tmux', ['list-sessions', '-F', '#{session_name}'], { encoding: 'utf8' }, (err, stdout) => {
-      const sessions = err ? [] : stdout.split('\n').filter(s => s.startsWith('sweatshop-'))
-      res.writeHead(200, { 'Content-Type': 'application/json', ...cors })
-      res.end(JSON.stringify({ sessions }))
-    })
+    const cors = dispatchCors()
+    const sessions = []
+    for (const [cwd, info] of dispatchSessions) {
+      const project = extractProject(cwd)
+      const agentRecord = [...agents.values()].find(a => a.cwd === cwd && !a.parentId)
+      sessions.push({
+        session: info.session,
+        cli: info.cli,
+        project,
+        agentStatus: agentRecord?.status || 'unknown',
+      })
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json', ...cors })
+    res.end(JSON.stringify({ sessions }))
     return
   }
 

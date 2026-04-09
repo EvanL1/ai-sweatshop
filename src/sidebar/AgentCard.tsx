@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import type { AgentWorker } from '../agents/types'
 import { BASE_SALARY, LEVEL_MULTIPLIER, LEVEL_LABELS, editRatio, totalToolCalls } from '../agents/types'
 import { useOfficeStore } from '../agents/store'
 import { StatusBadge } from './StatusBadge'
+import { DispatchInput } from './DispatchInput'
 import { SKILL_SPECS, SKILL_CATEGORIES } from '../skills/types'
 
 const SKILL_ICONS: Record<string, string> = {
@@ -20,6 +22,8 @@ export function AgentCard({ worker }: { worker: AgentWorker }) {
   const selectedId = useOfficeStore((s) => s.selectedWorkerId)
   const unlimited = useOfficeStore((s) => s.unlimitedMode)
   const isSelected = selectedId === worker.id
+  const [dispatching, setDispatching] = useState(false)
+  const canDispatch = !worker.isClone && (worker.status === 'idle' || worker.status === 'offduty')
 
   const effectiveSalary = (BASE_SALARY[worker.agentType] ?? 1) * (LEVEL_MULTIPLIER[worker.level] ?? 1) * worker.salaryMultiplier
 
@@ -48,7 +52,18 @@ export function AgentCard({ worker }: { worker: AgentWorker }) {
           {worker.isClone && <span className="text-yellow-400 text-[11px]">分身</span>}
           <span className="text-[#888] text-[11px] font-mono">{LEVEL_LABELS[worker.level]}</span>
         </div>
-        <StatusBadge status={worker.status} />
+        <div className="flex items-center gap-1">
+          {canDispatch && (
+            <button
+              className="text-[10px] font-mono text-[#e94560] hover:text-[#ff6b81]"
+              onClick={(e) => { e.stopPropagation(); setDispatching(!dispatching) }}
+              title="派活"
+            >
+              🚀
+            </button>
+          )}
+          <StatusBadge status={worker.status} />
+        </div>
       </div>
       <p className="text-[#8888a8] text-[13px] font-mono truncate">
         {worker.currentTask}
@@ -83,6 +98,9 @@ export function AgentCard({ worker }: { worker: AgentWorker }) {
           {!unlimited && <span className="text-[#888]">¥{effectiveSalary.toFixed(1)}</span>}
         </div>
       </div>
+      {dispatching && (
+        <DispatchInput agentId={worker.id} project={worker.project} onClose={() => setDispatching(false)} />
+      )}
     </div>
   )
 }
