@@ -139,6 +139,7 @@ function handleHookEvent(data) {
           project,
           cwd,
           startedAt: Date.now(),
+          turnsCompleted: 0,
         }
         agents.set(persistId, newAgent)
         cwdIndex.set(cwd, persistId)
@@ -165,6 +166,7 @@ function handleHookEvent(data) {
           status, currentTask: task,
           project: extractProject(data.cwd), cwd: data.cwd,
           startedAt: Date.now(),
+          turnsCompleted: 0,
         })
         broadcast({ type: 'agent:start', agent: agents.get(agentId) })
       } else {
@@ -183,7 +185,7 @@ function handleHookEvent(data) {
         agent.currentTask = `Done: ${data.tool_name}`
         agent.tasksCompleted = (agent.tasksCompleted || 0) + 1
         broadcast({ type: 'agent:status', agentId, status: 'idle', task: agent.currentTask, toolName: data.tool_name })
-        broadcast({ type: 'agent:task_completed', agentId })
+        broadcast({ type: 'agent:task_completed', agentId, toolName: data.tool_name })
       }
       // Ledger: reward coins based on tool type
       const toolRewards = { Write: 50000, Edit: 50000, Bash: 40000, Read: 15000, Grep: 15000, Glob: 15000, Agent: 80000 }
@@ -246,7 +248,8 @@ function handleHookEvent(data) {
         agent.status = 'idle'
         agent.currentTask = 'Waiting for next task...'
         agent.lastSeen = Date.now()
-        broadcast({ type: 'agent:status', agentId, status: 'idle', task: agent.currentTask })
+        agent.turnsCompleted = (agent.turnsCompleted || 0) + 1
+        broadcast({ type: 'agent:status', agentId, status: 'idle', task: agent.currentTask, turns: agent.turnsCompleted })
       }
       submitTx('turn_bonus', agentId, 100000, 'coin', 'Turn completed').catch(() => {})
       break
