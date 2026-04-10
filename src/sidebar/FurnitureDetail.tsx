@@ -48,7 +48,9 @@ function WhiteboardDetail() {
   const tokenPoolUsed = useOfficeStore((s) => s.tokenPoolUsed)
   const workers = useOfficeStore((s) => s.workers)
   const workerList = Object.values(workers)
-  const totalTasks = workerList.reduce((s, w) => s + w.tasksCompleted, 0)
+  const totEdits = workerList.reduce((s, w) => s + w.toolCalls.edits, 0)
+  const totReads = workerList.reduce((s, w) => s + w.toolCalls.reads, 0)
+  const totRuns = workerList.reduce((s, w) => s + w.toolCalls.runs, 0)
   const activeCount = workerList.filter((w) => w.status === 'typing' || w.status === 'running').length
   const pct = tokenPool > 0 ? ((tokenPoolUsed / tokenPool) * 100).toFixed(1) : '0'
 
@@ -56,7 +58,7 @@ function WhiteboardDetail() {
     <div className="space-y-1.5">
       <Row label="预算使用" value={`${Math.floor(tokenPoolUsed).toLocaleString()} / ${tokenPool.toLocaleString()}`} />
       <Row label="使用率" value={`${pct}%`} color={Number(pct) > 80 ? '#ef4444' : '#22c55e'} />
-      <Row label="总任务" value={`${totalTasks}`} />
+      <Row label="活动" value={`✏️${totEdits} · 📖${totReads} · ⚡${totRuns}`} />
       <Row label="活跃 Agent" value={`${activeCount} / ${workerList.length}`} />
       <MiniBar pct={tokenPoolUsed / tokenPool} />
     </div>
@@ -66,23 +68,28 @@ function WhiteboardDetail() {
 function KpiDetail() {
   const workers = useOfficeStore((s) => s.workers)
   const workerList = Object.values(workers)
-  const totalTokens = workerList.reduce((s, w) => s + w.tokenUsed, 0)
-  const totalTasks = workerList.reduce((s, w) => s + w.tasksCompleted, 0)
-  const avgRoi = totalTokens > 0 ? (totalTasks / (totalTokens / 1000)).toFixed(2) : '—'
-
-  const byType: Record<string, number> = {}
-  for (const w of workerList) {
-    byType[w.agentType] = (byType[w.agentType] || 0) + w.tokenUsed
-  }
+  const totEdits = workerList.reduce((s, w) => s + w.toolCalls.edits, 0)
+  const totReads = workerList.reduce((s, w) => s + w.toolCalls.reads, 0)
+  const totRuns = workerList.reduce((s, w) => s + w.toolCalls.runs, 0)
+  const activeCount = workerList.filter((w) => w.status === 'typing' || w.status === 'running').length
 
   return (
     <div className="space-y-1.5">
-      <Row label="总 Token" value={Math.floor(totalTokens).toLocaleString()} />
-      <Row label="总任务" value={`${totalTasks}`} />
-      <Row label="平均 ROI" value={avgRoi} />
-      <p className="text-[11px] font-mono text-[#6b7280] mt-1">按类型消耗:</p>
-      {Object.entries(byType).map(([type, tokens]) => (
-        <Row key={type} label={type} value={Math.floor(tokens).toLocaleString()} />
+      <Row label="活动总计" value={`✏️${totEdits} · 📖${totReads} · ⚡${totRuns}`} />
+      <Row label="活跃 Agent" value={`${activeCount} / ${workerList.length}`} />
+      <p className="text-[11px] font-mono text-[#6b7280] mt-1">按类型:</p>
+      {Object.entries(
+        workerList.reduce<Record<string, { e: number; r: number; x: number }>>((acc, w) => {
+          const prev = acc[w.agentType] || { e: 0, r: 0, x: 0 }
+          acc[w.agentType] = {
+            e: prev.e + w.toolCalls.edits,
+            r: prev.r + w.toolCalls.reads,
+            x: prev.x + w.toolCalls.runs,
+          }
+          return acc
+        }, {})
+      ).map(([type, tc]) => (
+        <Row key={type} label={type} value={`✏️${tc.e} · 📖${tc.r} · ⚡${tc.x}`} />
       ))}
     </div>
   )
@@ -91,12 +98,8 @@ function KpiDetail() {
 function LeaderboardDetail() {
   const workers = useOfficeStore((s) => s.workers)
   const ranked = Object.values(workers)
-    .filter((w) => w.tokenUsed > 100)
-    .sort((a, b) => {
-      const roiA = a.tokenUsed > 0 ? a.tasksCompleted / a.tokenUsed : 0
-      const roiB = b.tokenUsed > 0 ? b.tasksCompleted / b.tokenUsed : 0
-      return roiB - roiA
-    })
+    .filter((w) => totalToolCalls(w.toolCalls) > 0)
+    .sort((a, b) => totalToolCalls(b.toolCalls) - totalToolCalls(a.toolCalls))
     .slice(0, 8)
 
   return (
@@ -104,20 +107,15 @@ function LeaderboardDetail() {
       {ranked.length === 0 && (
         <p className="text-[11px] font-mono text-[#6b7280]">暂无数据</p>
       )}
-      {ranked.map((w, i) => {
-        const rank = getPerformanceRank(w)
-        const roi = w.tokenUsed > 0 ? (w.tasksCompleted / (w.tokenUsed / 1000)).toFixed(1) : '—'
-        return (
-          <div key={w.id} className="flex items-center justify-between text-[11px] font-mono">
-            <div className="flex items-center gap-1">
-              <span className="text-[#6b7280] w-3">{i + 1}.</span>
-              <span className="font-bold" style={{ color: RANK_COLORS[rank] }}>{rank}</span>
-              <span className="text-[#b0b0c0] truncate max-w-[70px]">{w.name}</span>
-            </div>
-            <span className="text-[#6b7280]">ROI {roi}</span>
+      {ranked.map((w, i) => (
+        <div key={w.id} className="flex items-center justify-between text-[11px] font-mono">
+          <div className="flex items-center gap-1">
+            <span className="text-[#6b7280] w-3">{i + 1}.</span>
+            <span className="text-[#b0b0c0] truncate max-w-[90px]">{w.name}</span>
           </div>
-        )
-      })}
+          <span className="text-[#6b7280]">✏️{w.toolCalls.edits} 📖{w.toolCalls.reads} ⚡{w.toolCalls.runs}</span>
+        </div>
+      ))}
     </div>
   )
 }

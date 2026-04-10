@@ -55,13 +55,17 @@ const EVENT_DEFS: EventDef[] = [
       const { workers } = useOfficeStore.getState()
       const w = workers[id]
       if (!w) return
-      // Boost: add 3 task completions
-      useOfficeStore.setState((s) => ({
-        workers: {
-          ...s.workers,
-          [id]: { ...s.workers[id], tasksCompleted: s.workers[id].tasksCompleted + 3 },
-        },
-      }))
+      // Boost: add 3 edits to simulate a burst of productivity
+      useOfficeStore.setState((s) => {
+        const worker = s.workers[id]
+        if (!worker) return s
+        return {
+          workers: {
+            ...s.workers,
+            [id]: { ...worker, toolCalls: { ...worker.toolCalls, edits: worker.toolCalls.edits + 3 } },
+          },
+        }
+      })
       useOfficeStore.getState().updateStatus(id, 'typing', '💡 灵感爆发！疯狂输出...')
     },
   },

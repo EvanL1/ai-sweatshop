@@ -1,8 +1,8 @@
 import { useOfficeStore } from '../agents/store'
 
 const TABS = [
-  { key: 'people' as const, label: '👤 人力' },
-  { key: 'project' as const, label: '📋 项目' },
+  { key: 'people' as const, label: '👤 Agent' },
+  { key: 'project' as const, label: '📋 Project' },
 ]
 
 export function TabBar() {
