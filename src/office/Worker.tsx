@@ -1,11 +1,10 @@
-import { useCallback, useRef, useEffect } from 'react'
+import { useCallback, useRef, useEffect, useState } from 'react'
 import { useTick } from '@pixi/react'
 import type { Graphics as PixiGraphics, FederatedPointerEvent } from 'pixi.js'
 import type { AgentWorker } from '../agents/types'
 import { LEVEL_MULTIPLIER, LEVEL_ORDER, editRatio, totalToolCalls } from '../agents/types'
 import { useOfficeStore } from '../agents/store'
 import { SpeechBubble } from './SpeechBubble'
-import { SkillLevelUp } from './SkillLevelUp'
 import { SKILL_CATEGORIES, SKILL_SPECS } from '../skills/types'
 
 const AGENT_COLORS: Record<string, number> = {
@@ -81,29 +80,13 @@ export function Worker({ worker, isSelected }: Props) {
     : ratio >= 0.15 ? 0x60a5fa
     : 0xf97316
   // Animation state — all refs to avoid per-frame React re-renders
-  const animTime = useRef(Math.random() * 10)
+  const [animTimeInit] = useState(() => Math.random() * 10)
+  const animTime = useRef(animTimeInit)
   const bodyBobRef = useRef(0)
   const handPhaseRef = useRef(false)
   const eyeOpenRef = useRef(true)
   const screenScrollRef = useRef(0)
   const gfxRef = useRef<PixiGraphics | null>(null)
-
-  useTick(useCallback((ticker: { deltaMS: number }) => {
-    const dt = ticker.deltaMS / 1000
-    animTime.current += dt
-    bodyBobRef.current = Math.sin(animTime.current * 2) * 1
-    if (isWorking) {
-      handPhaseRef.current = Math.floor(animTime.current * 4) % 2 === 0
-      screenScrollRef.current = (animTime.current * 8) % 20
-    }
-    if (!isWorking) {
-      eyeOpenRef.current = (animTime.current % 3.5) > 0.15
-    }
-    // Imperatively redraw without triggering React re-render
-    if (gfxRef.current) {
-      drawWorker(gfxRef.current)
-    }
-  }, [isWorking]))
 
   useEffect(() => {
     const onMouseMove = (e: PointerEvent) => {
@@ -416,6 +399,23 @@ export function Worker({ worker, isSelected }: Props) {
       }
   }, [color, hairColor, facing, isWorking, isOffduty, isSelected, worker.isClone, worker.id,
      worker.toolCalls, worker.level, worker.skills, glowColor])
+
+  useTick(useCallback((ticker: { deltaMS: number }) => {
+    const dt = ticker.deltaMS / 1000
+    animTime.current += dt
+    bodyBobRef.current = Math.sin(animTime.current * 2) * 1
+    if (isWorking) {
+      handPhaseRef.current = Math.floor(animTime.current * 4) % 2 === 0
+      screenScrollRef.current = (animTime.current * 8) % 20
+    }
+    if (!isWorking) {
+      eyeOpenRef.current = (animTime.current % 3.5) > 0.15
+    }
+    // Imperatively redraw without triggering React re-render
+    if (gfxRef.current) {
+      drawWorker(gfxRef.current)
+    }
+  }, [isWorking, drawWorker]))
 
   const openContextMenu = useOfficeStore((s) => s.openContextMenu)
 

@@ -65,7 +65,7 @@ export function FurnitureItem({ item }: Props) {
 
     // Type-specific rendering with live data
     drawFurnitureDetail(g, item.type, px, py, pw, ph, live)
-  }, [px, py, pw, ph, def.color, isSelected, buildMode, item.type, item.rotation, live])
+  }, [px, py, pw, ph, def.color, isSelected, buildMode, item.type, live])
 
   const onPointerDown = useCallback((e: FederatedPointerEvent) => {
     if (e.button === 2) {

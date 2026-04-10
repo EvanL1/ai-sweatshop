@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTick } from '@pixi/react'
 import type { Graphics as PixiGraphics } from 'pixi.js'
 
@@ -31,26 +31,24 @@ export function SpeechBubble({ text, x, y }: Props) {
   const truncated = text.length > 28 ? text.slice(0, 26) + '...' : text
 
   // Typewriter: reveal chars over time when text changes
-  const [visibleLen, setVisibleLen] = useState(truncated.length)
-  const prevTextRef = useRef(truncated)
   const elapsedRef = useRef(0)
-
-  useEffect(() => {
-    if (truncated !== prevTextRef.current) {
-      prevTextRef.current = truncated
-      setVisibleLen(0)
-      elapsedRef.current = 0
-    }
-  }, [truncated])
+  const [visibleLen, setVisibleLen] = useState(0)
+  const [prevTruncated, setPrevTruncated] = useState(truncated)
+  // Reset typewriter when text changes — update state during render (React-approved pattern)
+  if (truncated !== prevTruncated) {
+    setPrevTruncated(truncated)
+    setVisibleLen(0)
+  }
 
   // Floating bob animation
   const bobRef = useRef(0)
   const [bobY, setBobY] = useState(0)
 
   useTick(
-    useCallback((ticker: any) => {
+    useCallback((ticker: { deltaMS: number }) => {
       // Typewriter tick
       if (visibleLen < truncated.length) {
+        if (visibleLen === 0) elapsedRef.current = 0
         elapsedRef.current += ticker.deltaMS / 1000
         const newLen = Math.min(
           truncated.length,

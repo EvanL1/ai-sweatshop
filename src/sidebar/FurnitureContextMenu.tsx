@@ -20,8 +20,15 @@ export function FurnitureContextMenu() {
     return () => document.removeEventListener('mousedown', onClick)
   }, [close])
 
+  const [prevMenu, setPrevMenu] = useState(menu)
+  // Clear pos when menu closes — update state during render (React-approved pattern)
+  if (prevMenu !== menu) {
+    setPrevMenu(menu)
+    if (!menu) setPos(null)
+  }
+
   useLayoutEffect(() => {
-    if (!menu || !ref.current) { setPos(null); return }
+    if (!menu || !ref.current) return
     const { offsetWidth: w, offsetHeight: h } = ref.current
     const left = Math.min(menu.x, window.innerWidth - w - 8)
     const top = Math.min(menu.y, window.innerHeight - h - 8)

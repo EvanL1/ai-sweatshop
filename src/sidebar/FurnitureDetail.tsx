@@ -189,6 +189,7 @@ function BulletinDetail() {
 function TimeClockDetail() {
   const workers = useOfficeStore((s) => s.workers)
   const workerList = Object.values(workers)
+  // eslint-disable-next-line react-hooks/purity -- reading current time for elapsed display is intentional
   const now = Date.now()
 
   return (
